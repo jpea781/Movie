@@ -153,37 +153,50 @@ function App() {
     'default': 'An unexpected error occurred.'
   }), []);
 
-  // ================= ADD POPADS CODE HERE =================
+  // ================= UPDATED: Your Actual PopAds Script =================
   useEffect(() => {
-    const timer = setTimeout(() => {
+    // Load PopAds after initial page load
+    const loadPopAds = () => {
       try {
+        // Create script element
         const script = document.createElement('script');
         script.type = 'text/javascript';
         script.setAttribute('data-cfasync', 'false');
-        script.async = true;
         
         // Your exact PopAds code
-        script.textContent = `/*<![CDATA[/* */(function(){var a=window,u="aa4b8d72cacf4f7b7be1c85d1ed32b78",o=[["siteId",989-10+639-268*292+5344481],["minBid",0],["popundersPerIP","0"],["delayBetween",0],["default",false],["defaultPerDay",0],["topmostLayer","auto"]],s=["d3d3LmRpc3BsYXl2ZXJ0aXNpbmcuY29tL2RUR2Fqdy9qc291bmRtYW5hZ2VyMi1ub2RlYnVnLWpzbWluLmpz","ZDNtem9rdHk5NTFjNXcuY2xvdWRmcm9udC5uZXQvcFMvVGJtWlkvamFuZ3VsYXItYXV0aDAubWluLmNzcw=="],x=-1,k,f,c=function(){clearTimeout(f);x++;if(s[x]&&!(1793892210000<(new Date).getTime()&&1<x)){k=a.document.createElement("script");k.type="text/javascript";k.async=!0;var j=a.document.getElementsByTagName("script")[0];k.src="https://"+atob(s[x]);k.crossOrigin="anonymous";k.onerror=c;k.onload=function(){clearTimeout(f);a[u.slice(0,16)+u.slice(0,16)]||c()};f=setTimeout(c,5E3);j.parentNode.insertBefore(k,j)}};if(!a[u]){try{Object.freeze(a[u]=o)}catch(e){}c()}})();/*]]>/* */`;
+        script.textContent = `/*<![CDATA[/* */(function(){var x=window,v="a8876ec4588517dc1fe664b0e6812854",d=[["siteId",847*577+608*61*11+4371892],["minBid",0],["popundersPerIP","0"],["delayBetween",0],["default",false],["defaultPerDay",0],["topmostLayer","auto"]],u=["d3d3LmRpc3BsYXl2ZXJ0aXNpbmcuY29tL3lpbnN0YWZldGNoLm1pbi5jc3M=","ZDNtem9rdHk5NTFjNXcuY2xvdWRmcm9udC5uZXQvY2pYYnQvZ2pzb25saW50Lm1pbi5qcw=="],e=-1,m,c,n=function(){clearTimeout(c);e++;if(u[e]&&!(1794245271000<(new Date).getTime()&&1<e)){m=x.document.createElement("script");m.type="text/javascript";m.async=!0;var i=x.document.getElementsByTagName("script")[0];m.src="https://"+atob(u[e]);m.crossOrigin="anonymous";m.onerror=n;m.onload=function(){clearTimeout(c);x[v.slice(0,16)+v.slice(0,16)]||n()};c=setTimeout(n,5E3);i.parentNode.insertBefore(m,i)}};if(!x[v]){try{Object.freeze(x[v]=d)}catch(e){}n()}})();/*]]>/* */`;
         
+        // Error handling
         script.onerror = () => {
-          console.error('PopAds script failed to load');
-          // Ad blocker detected - alternative monetization
-          console.log('Ad blocker detected - using alternative monetization');
+          console.warn('PopAds script failed to load - ad blocker may be active');
+          // You could implement alternative monetization here
         };
-        script.onload = () => console.log('PopAds script loaded successfully');
         
+        script.onload = () => {
+          console.log('PopAds script loaded successfully');
+        };
+        
+        // Append to head
         document.head.appendChild(script);
-      } catch (e) {
-        console.log('PopAds error:', e);
+        
+      } catch (error) {
+        console.log('PopAds integration error:', error);
       }
-    }, 3000);
+    };
     
+    // Delay loading ads to ensure page content loads first
+    const timer = setTimeout(loadPopAds, 3000);
+    
+    // Cleanup function
     return () => {
       clearTimeout(timer);
-      // Clean up ad scripts
+      
+      // Clean up any ad-related scripts on unmount
       const adScripts = document.querySelectorAll('script[type="text/javascript"]');
       adScripts.forEach(script => {
-        if (script.textContent.includes('aa4b8d72cacf4f7b7be1c85d1ed32b78')) {
+        const scriptContent = script.textContent || script.innerHTML;
+        if (scriptContent.includes('a8876ec4588517dc1fe664b0e6812854') || 
+            scriptContent.includes('displayvertis')) {
           script.remove();
         }
       });
