@@ -145,6 +145,11 @@ function App() {
   const lastMovieRef = useRef();
   const observerRef = useRef();
 
+  // Track ad frequency and timing
+  const [adsLoaded, setAdsLoaded] = useState(false);
+  const lastAdTimeRef = useRef(0);
+  const adCooldown = 60000; // 60 seconds between ads
+
   // Error messages mapping
   const errorMessages = useMemo(() => ({
     'Failed to fetch': 'Network error. Please check your connection.',
@@ -153,55 +158,73 @@ function App() {
     'default': 'An unexpected error occurred.'
   }), []);
 
-  // ================= UPDATED: Your Actual PopAds Script =================
-  useEffect(() => {
-    // Load PopAds after initial page load
-    const loadPopAds = () => {
-      try {
-        // Create script element
-        const script = document.createElement('script');
-        script.type = 'text/javascript';
-        script.setAttribute('data-cfasync', 'false');
-        
-        // Your exact PopAds code
-        script.textContent = `/*<![CDATA[/* */(function(){var x=window,v="a8876ec4588517dc1fe664b0e6812854",d=[["siteId",847*577+608*61*11+4371892],["minBid",0],["popundersPerIP","0"],["delayBetween",0],["default",false],["defaultPerDay",0],["topmostLayer","auto"]],u=["d3d3LmRpc3BsYXl2ZXJ0aXNpbmcuY29tL3lpbnN0YWZldGNoLm1pbi5jc3M=","ZDNtem9rdHk5NTFjNXcuY2xvdWRmcm9udC5uZXQvY2pYYnQvZ2pzb25saW50Lm1pbi5qcw=="],e=-1,m,c,n=function(){clearTimeout(c);e++;if(u[e]&&!(1794245271000<(new Date).getTime()&&1<e)){m=x.document.createElement("script");m.type="text/javascript";m.async=!0;var i=x.document.getElementsByTagName("script")[0];m.src="https://"+atob(u[e]);m.crossOrigin="anonymous";m.onerror=n;m.onload=function(){clearTimeout(c);x[v.slice(0,16)+v.slice(0,16)]||n()};c=setTimeout(n,5E3);i.parentNode.insertBefore(m,i)}};if(!x[v]){try{Object.freeze(x[v]=d)}catch(e){}n()}})();/*]]>/* */`;
-        
-        // Error handling
-        script.onerror = () => {
-          console.warn('PopAds script failed to load - ad blocker may be active');
-          // You could implement alternative monetization here
-        };
-        
-        script.onload = () => {
-          console.log('PopAds script loaded successfully');
-        };
-        
-        // Append to head
-        document.head.appendChild(script);
-        
-      } catch (error) {
-        console.log('PopAds integration error:', error);
-      }
-    };
+  // ================= AD LOADING FUNCTION =================
+  const loadPopAds = useCallback(() => {
+    const now = Date.now();
     
-    // Delay loading ads to ensure page content loads first
-    const timer = setTimeout(loadPopAds, 3000);
+    // Don't load ads too frequently (respect cooldown)
+    if (now - lastAdTimeRef.current < adCooldown) {
+      console.log('Ad cooldown active, skipping ad load');
+      return;
+    }
     
-    // Cleanup function
-    return () => {
-      clearTimeout(timer);
+    // Don't reload ads if already loaded
+    if (adsLoaded) {
+      console.log('Ads already loaded, skipping');
+      return;
+    }
+
+    try {
+      console.log('Loading PopAds...');
       
-      // Clean up any ad-related scripts on unmount
-      const adScripts = document.querySelectorAll('script[type="text/javascript"]');
-      adScripts.forEach(script => {
+      // Clean up any existing ad scripts first
+      const existingScripts = document.querySelectorAll('script[type="text/javascript"]');
+      existingScripts.forEach(script => {
         const scriptContent = script.textContent || script.innerHTML;
         if (scriptContent.includes('a8876ec4588517dc1fe664b0e6812854') || 
             scriptContent.includes('displayvertis')) {
           script.remove();
         }
       });
+
+      // Create script element
+      const script = document.createElement('script');
+      script.type = 'text/javascript';
+      script.setAttribute('data-cfasync', 'false');
+      
+      // Your exact PopAds code
+      script.textContent = `/*<![CDATA[/* */(function(){var x=window,v="a8876ec4588517dc1fe664b0e6812854",d=[["siteId",847*577+608*61*11+4371892],["minBid",0],["popundersPerIP","0"],["delayBetween",0],["default",false],["defaultPerDay",0],["topmostLayer","auto"]],u=["d3d3LmRpc3BsYXl2ZXJ0aXNpbmcuY29tL3lpbnN0YWZldGNoLm1pbi5jc3M=","ZDNtem9rdHk5NTFjNXcuY2xvdWRmcm9udC5uZXQvY2pYYnQvZ2pzb25saW50Lm1pbi5qcw=="],e=-1,m,c,n=function(){clearTimeout(c);e++;if(u[e]&&!(1794245271000<(new Date).getTime()&&1<e)){m=x.document.createElement("script");m.type="text/javascript";m.async=!0;var i=x.document.getElementsByTagName("script")[0];m.src="https://"+atob(u[e]);m.crossOrigin="anonymous";m.onerror=n;m.onload=function(){clearTimeout(c);x[v.slice(0,16)+v.slice(0,16)]||n()};c=setTimeout(n,5E3);i.parentNode.insertBefore(m,i)}};if(!x[v]){try{Object.freeze(x[v]=d)}catch(e){}n()}})();/*]]>/* */`;
+      
+      // Error handling
+      script.onerror = () => {
+        console.warn('PopAds script failed to load - ad blocker may be active');
+      };
+      
+      script.onload = () => {
+        console.log('PopAds script loaded successfully');
+        setAdsLoaded(true);
+        lastAdTimeRef.current = Date.now();
+      };
+      
+      // Append to head
+      document.head.appendChild(script);
+      
+    } catch (error) {
+      console.log('PopAds integration error:', error);
+    }
+  }, [adsLoaded]);
+
+  // ================= Load initial ads after delay =================
+  useEffect(() => {
+    // Initial ad load after 5 seconds (once user has seen the page)
+    const initialTimer = setTimeout(() => {
+      loadPopAds();
+    }, 5000);
+    
+    return () => {
+      clearTimeout(initialTimer);
     };
-  }, []);
+  }, [loadPopAds]);
 
   // ================= Check API Key =================
   useEffect(() => {
@@ -447,6 +470,11 @@ function App() {
       // Debounced full search
       typingTimeoutRef.current = setTimeout(() => {
         performSearch(value);
+        
+        // Load ads after search (with a small delay)
+        setTimeout(() => {
+          loadPopAds();
+        }, 1000);
       }, 500);
     }
   };
@@ -532,11 +560,18 @@ function App() {
 
   const startWatching = (item) => {
     if (!item?.id) return;
-    const url = type === "movie"
-      ? `https://vidsrc.to/embed/movie/${item.id}`
-      : `https://vidsrc.to/embed/tv/${item.id}`;
-    setWatchUrl(url);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    
+    // Load ads when user clicks to watch
+    loadPopAds();
+    
+    // Then proceed to load the movie
+    setTimeout(() => {
+      const url = type === "movie"
+        ? `https://vidsrc.to/embed/movie/${item.id}`
+        : `https://vidsrc.to/embed/tv/${item.id}`;
+      setWatchUrl(url);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }, 500);
   };
 
   const resetToHome = () => {
@@ -562,6 +597,24 @@ function App() {
     setSearch("");
     setSearchResults([]);
     setSuggestions([]);
+    
+    // Load ads when changing categories (with small delay)
+    setTimeout(() => {
+      loadPopAds();
+    }, 1000);
+  };
+
+  // ================= Handle type change (Movie/TV) =================
+  const handleTypeChange = (newType) => {
+    setType(newType);
+    handleClearSearch();
+    setPage(1);
+    setHasMore(true);
+    
+    // Load ads when switching between movies and TV shows
+    setTimeout(() => {
+      loadPopAds();
+    }, 1000);
   };
 
   const displayMovies = search.trim() ? searchResults : movies;
@@ -590,6 +643,21 @@ function App() {
     
     document.title = title;
   }, [search, watchUrl, category, type, categoryLabels]);
+
+  // ================= Cleanup on unmount =================
+  useEffect(() => {
+    return () => {
+      // Clean up ad scripts on unmount
+      const adScripts = document.querySelectorAll('script[type="text/javascript"]');
+      adScripts.forEach(script => {
+        const scriptContent = script.textContent || script.innerHTML;
+        if (scriptContent.includes('a8876ec4588517dc1fe664b0e6812854') || 
+            scriptContent.includes('displayvertis')) {
+          script.remove();
+        }
+      });
+    };
+  }, []);
 
   return (
     <div className="bg-black text-white min-h-screen">
@@ -677,12 +745,7 @@ function App() {
         
         <div className="flex gap-2">
           <button
-            onClick={() => {
-              setType("movie");
-              handleClearSearch();
-              setPage(1);
-              setHasMore(true);
-            }}
+            onClick={() => handleTypeChange("movie")}
             className={`px-4 py-2 rounded-full text-sm transition-colors duration-300 ${
               type === "movie" ? "bg-red-600" : "bg-gray-800 hover:bg-gray-700"
             }`}
@@ -691,12 +754,7 @@ function App() {
             Movies
           </button>
           <button
-            onClick={() => {
-              setType("tv");
-              handleClearSearch();
-              setPage(1);
-              setHasMore(true);
-            }}
+            onClick={() => handleTypeChange("tv")}
             className={`px-4 py-2 rounded-full text-sm transition-colors duration-300 ${
               type === "tv" ? "bg-red-600" : "bg-gray-800 hover:bg-gray-700"
             }`}
