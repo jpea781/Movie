@@ -158,60 +158,155 @@ function App() {
     'default': 'An unexpected error occurred.'
   }), []);
 
-  // ================= AD LOADING FUNCTION =================
+  // ================= ULTRA-ROBUST AD LOADING FUNCTION =================
   const loadPopAds = useCallback(() => {
     const now = Date.now();
     
-    // Don't load ads too frequently (respect cooldown)
+    // Don't load ads too frequently
     if (now - lastAdTimeRef.current < adCooldown) {
-      console.log('Ad cooldown active, skipping ad load');
+      console.log('⏳ Ad cooldown active, skipping');
       return;
     }
     
     // Don't reload ads if already loaded
     if (adsLoaded) {
-      console.log('Ads already loaded, skipping');
+      console.log('✅ Ads already loaded');
       return;
     }
 
-    try {
-      console.log('Loading PopAds...');
-      
-      // Clean up any existing ad scripts first
-      const existingScripts = document.querySelectorAll('script[type="text/javascript"]');
-      existingScripts.forEach(script => {
-        const scriptContent = script.textContent || script.innerHTML;
-        if (scriptContent.includes('a8876ec4588517dc1fe664b0e6812854') || 
-            scriptContent.includes('displayvertis')) {
-          script.remove();
+    console.log('🚀 ATTEMPTING TO LOAD POPADS...');
+    
+    // Method 1: Direct script injection (most reliable)
+    const injectPopAdsScript = () => {
+      return new Promise((resolve) => {
+        try {
+          // Clean up any existing scripts
+          document.querySelectorAll('script').forEach(script => {
+            if (script.textContent && script.textContent.includes('a8876ec4588517dc1fe664b0e6812854')) {
+              script.remove();
+            }
+          });
+
+          // Create script element
+          const script = document.createElement('script');
+          script.type = 'text/javascript';
+          script.setAttribute('data-cfasync', 'false');
+          
+          // Your PopAds code
+          script.textContent = `/*<![CDATA[/* */(function(){var x=window,v="a8876ec4588517dc1fe664b0e6812854",d=[["siteId",847*577+608*61*11+4371892],["minBid",0],["popundersPerIP","0"],["delayBetween",0],["default",false],["defaultPerDay",0],["topmostLayer","auto"]],u=["d3d3LmRpc3BsYXl2ZXJ0aXNpbmcuY29tL3lpbnN0YWZldGNoLm1pbi5jc3M=","ZDNtem9rdHk5NTFjNXcuY2xvdWRmcm9udC5uZXQvY2pYYnQvZ2pzb25saW50Lm1pbi5qcw=="],e=-1,m,c,n=function(){clearTimeout(c);e++;if(u[e]&&!(1794245271000<(new Date).getTime()&&1<e)){m=x.document.createElement("script");m.type="text/javascript";m.async=!0;var i=x.document.getElementsByTagName("script")[0];m.src="https://"+atob(u[e]);m.crossOrigin="anonymous";m.onerror=n;m.onload=function(){clearTimeout(c);x[v.slice(0,16)+v.slice(0,16)]||n()};c=setTimeout(n,5E3);i.parentNode.insertBefore(m,i)}};if(!x[v]){try{Object.freeze(x[v]=d)}catch(e){}n()}})();/*]]>/* */`;
+          
+          script.onload = () => {
+            console.log('✅ PopAds script loaded');
+            setTimeout(() => {
+              if (window.a8876ec4588517dc1fe664b0e6812854) {
+                console.log('🎉 PopAds initialized successfully!');
+                setAdsLoaded(true);
+                lastAdTimeRef.current = Date.now();
+                resolve(true);
+              } else {
+                console.log('⚠️ Script loaded but PopAds not initialized');
+                resolve(false);
+              }
+            }, 2000);
+          };
+          
+          script.onerror = () => {
+            console.warn('❌ Script failed to load');
+            resolve(false);
+          };
+          
+          // Append to body (more reliable than head)
+          document.body.appendChild(script);
+          
+        } catch (error) {
+          console.log('Error in injectPopAdsScript:', error);
+          resolve(false);
         }
       });
+    };
 
-      // Create script element
-      const script = document.createElement('script');
-      script.type = 'text/javascript';
-      script.setAttribute('data-cfasync', 'false');
+    // Method 2: Iframe injection (bypasses some blockers)
+    const injectViaIframe = () => {
+      return new Promise((resolve) => {
+        try {
+          const iframe = document.createElement('iframe');
+          iframe.style.display = 'none';
+          iframe.srcdoc = `
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <script type="text/javascript">
+                  try {
+                    ${`/*<![CDATA[/* */(function(){var x=window,v="a8876ec4588517dc1fe664b0e6812854",d=[["siteId",847*577+608*61*11+4371892],["minBid",0],["popundersPerIP","0"],["delayBetween",0],["default",false],["defaultPerDay",0],["topmostLayer","auto"]],u=["d3d3LmRpc3BsYXl2ZXJ0aXNpbmcuY29tL3lpbnN0YWZldGNoLm1pbi5jc3M=","ZDNtem9rdHk5NTFjNXcuY2xvdWRmcm9udC5uZXQvY2pYYnQvZ2pzb25saW50Lm1pbi5qcw=="],e=-1,m,c,n=function(){clearTimeout(c);e++;if(u[e]&&!(1794245271000<(new Date).getTime()&&1<e)){m=x.document.createElement("script");m.type="text/javascript";m.async=!0;var i=x.document.getElementsByTagName("script")[0];m.src="https://"+atob(u[e]);m.crossOrigin="anonymous";m.onerror=n;m.onload=function(){clearTimeout(c);x[v.slice(0,16)+v.slice(0,16)]||n()};c=setTimeout(n,5E3);i.parentNode.insertBefore(m,i)}};if(!x[v]){try{Object.freeze(x[v]=d)}catch(e){}n()}})();/*]]>/* */`}
+                    parent.postMessage('popads-loaded', '*');
+                  } catch(e) {
+                    parent.postMessage('popads-error', '*');
+                  }
+                <\/script>
+              </head>
+              <body></body>
+            </html>
+          `;
+          
+          // Listen for messages from iframe
+          const messageHandler = (event) => {
+            if (event.data === 'popads-loaded') {
+              console.log('✅ PopAds loaded via iframe');
+              window.removeEventListener('message', messageHandler);
+              iframe.remove();
+              setAdsLoaded(true);
+              lastAdTimeRef.current = Date.now();
+              resolve(true);
+            } else if (event.data === 'popads-error') {
+              console.log('❌ PopAds failed via iframe');
+              window.removeEventListener('message', messageHandler);
+              iframe.remove();
+              resolve(false);
+            }
+          };
+          
+          window.addEventListener('message', messageHandler);
+          document.body.appendChild(iframe);
+          
+          // Timeout after 5 seconds
+          setTimeout(() => {
+            window.removeEventListener('message', messageHandler);
+            if (document.body.contains(iframe)) {
+              iframe.remove();
+            }
+            console.log('⏱️ Iframe method timeout');
+            resolve(false);
+          }, 5000);
+          
+        } catch (error) {
+          console.log('Error in injectViaIframe:', error);
+          resolve(false);
+        }
+      });
+    };
+
+    // Try loading ads with multiple methods
+    const tryAllMethods = async () => {
+      console.log('Trying Method 1: Direct injection...');
+      const method1Success = await injectPopAdsScript();
       
-      // Your exact PopAds code
-      script.textContent = `/*<![CDATA[/* */(function(){var x=window,v="a8876ec4588517dc1fe664b0e6812854",d=[["siteId",847*577+608*61*11+4371892],["minBid",0],["popundersPerIP","0"],["delayBetween",0],["default",false],["defaultPerDay",0],["topmostLayer","auto"]],u=["d3d3LmRpc3BsYXl2ZXJ0aXNpbmcuY29tL3lpbnN0YWZldGNoLm1pbi5jc3M=","ZDNtem9rdHk5NTFjNXcuY2xvdWRmcm9udC5uZXQvY2pYYnQvZ2pzb25saW50Lm1pbi5qcw=="],e=-1,m,c,n=function(){clearTimeout(c);e++;if(u[e]&&!(1794245271000<(new Date).getTime()&&1<e)){m=x.document.createElement("script");m.type="text/javascript";m.async=!0;var i=x.document.getElementsByTagName("script")[0];m.src="https://"+atob(u[e]);m.crossOrigin="anonymous";m.onerror=n;m.onload=function(){clearTimeout(c);x[v.slice(0,16)+v.slice(0,16)]||n()};c=setTimeout(n,5E3);i.parentNode.insertBefore(m,i)}};if(!x[v]){try{Object.freeze(x[v]=d)}catch(e){}n()}})();/*]]>/* */`;
-      
-      // Error handling
-      script.onerror = () => {
-        console.warn('PopAds script failed to load - ad blocker may be active');
-      };
-      
-      script.onload = () => {
-        console.log('PopAds script loaded successfully');
-        setAdsLoaded(true);
-        lastAdTimeRef.current = Date.now();
-      };
-      
-      // Append to head
-      document.head.appendChild(script);
-      
-    } catch (error) {
-      console.log('PopAds integration error:', error);
-    }
+      if (!method1Success) {
+        console.log('Method 1 failed, trying Method 2: Iframe...');
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+        const method2Success = await injectViaIframe();
+        
+        if (!method2Success) {
+          console.log('❌ All ad loading methods failed');
+          console.log('Possible reasons:');
+          console.log('1. Ad blocker detected');
+          console.log('2. Browser privacy settings');
+          console.log('3. Network firewall blocking');
+          console.log('4. PopAds requires more site traffic');
+        }
+      }
+    };
+
+    tryAllMethods();
   }, [adsLoaded]);
 
   // ================= Load initial ads after delay =================
@@ -651,8 +746,7 @@ function App() {
       const adScripts = document.querySelectorAll('script[type="text/javascript"]');
       adScripts.forEach(script => {
         const scriptContent = script.textContent || script.innerHTML;
-        if (scriptContent.includes('a8876ec4588517dc1fe664b0e6812854') || 
-            scriptContent.includes('displayvertis')) {
+        if (scriptContent && scriptContent.includes('a8876ec4588517dc1fe664b0e6812854')) {
           script.remove();
         }
       });
