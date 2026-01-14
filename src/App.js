@@ -3,6 +3,14 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from "react"
 const API_KEY = process.env.REACT_APP_TMDB_API_KEY;
 const IMG = "https://image.tmdb.org/t/p/original";
 
+// ================= Helper Functions =================
+const formatRuntime = (minutes) => {
+  if (!minutes) return "N/A";
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+};
+
 // ================= Simple Error Boundary =================
 class SimpleErrorBoundary extends React.Component {
   constructor(props) {
@@ -44,6 +52,7 @@ class SimpleErrorBoundary extends React.Component {
 const MovieItem = React.memo(({ item, type, onClick }) => {
   const [imgError, setImgError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [showFullDescription, setShowFullDescription] = useState(false);
 
   const handleClick = () => {
     onClick(item);
@@ -56,10 +65,21 @@ const MovieItem = React.memo(({ item, type, onClick }) => {
     }
   };
 
+  // Toggle description
+  const toggleDescription = (e) => {
+    e.stopPropagation();
+    setShowFullDescription(!showFullDescription);
+  };
+
   // Check if movie is Tagalog
   const isTagalog = item.original_language === 'tl' || 
                      (item.origin_country && item.origin_country.includes('PH')) ||
                      (item.production_countries && item.production_countries.some(country => country.iso_3166_1 === 'PH'));
+
+  // Truncate description
+  const truncatedDescription = item.overview 
+    ? (showFullDescription ? item.overview : item.overview.substring(0, 80) + '...')
+    : 'No description available';
 
   return (
     <div
@@ -109,12 +129,41 @@ const MovieItem = React.memo(({ item, type, onClick }) => {
         )}
       </div>
       
-      <p className="font-medium text-sm md:text-base truncate group-hover:text-red-400 transition-colors duration-300">
+      <h3 className="font-bold text-sm md:text-base truncate group-hover:text-red-400 transition-colors duration-300 mb-1">
         {item.title || item.name}
-      </p>
-      <p className="text-gray-400 text-xs md:text-sm">
-        {item.release_date?.substring(0,4) || item.first_air_date?.substring(0,4) || "Unknown"}
-      </p>
+      </h3>
+      
+      <div className="space-y-2">
+        <p className="text-gray-400 text-xs md:text-sm">
+          {item.release_date?.substring(0,4) || item.first_air_date?.substring(0,4) || "Unknown"}
+          {type === "movie" && item.runtime && (
+            <span className="ml-2">• {formatRuntime(item.runtime)}</span>
+          )}
+        </p>
+        
+        {/* Movie Description */}
+        <div className="text-gray-300 text-xs">
+          <p className={`${!showFullDescription ? 'line-clamp-2' : ''} mb-1`}>
+            {truncatedDescription}
+          </p>
+          {item.overview && item.overview.length > 80 && (
+            <button
+              onClick={toggleDescription}
+              className="text-red-400 hover:text-red-300 text-xs transition-colors duration-300"
+              aria-expanded={showFullDescription}
+            >
+              {showFullDescription ? 'Show Less' : 'Read More'}
+            </button>
+          )}
+        </div>
+        
+        {/* Cast preview */}
+        {item.credits?.cast?.slice(0, 2).length > 0 && (
+          <p className="text-xs text-gray-500 truncate">
+            With: {item.credits.cast.slice(0, 2).map(p => p.name).join(', ')}
+          </p>
+        )}
+      </div>
     </div>
   );
 });
@@ -353,7 +402,7 @@ function App() {
       setLoading(true);
       setError(null);
       const res = await fetch(
-        `https://api.themoviedb.org/3/trending/${type}/week?api_key=${API_KEY}&page=${pageNum}`
+        `https://api.themoviedb.org/3/trending/${type}/week?api_key=${API_KEY}&page=${pageNum}&append_to_response=credits`
       );
       
       if (!res.ok) throw new Error("Failed to fetch");
@@ -386,9 +435,9 @@ function App() {
       if (cat === "filipino") {
         // Special endpoint for Tagalog movies
         if (type === "movie") {
-          endpoint = `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&with_original_language=tl&region=PH&sort_by=popularity.desc&page=${pageNum}&include_adult=false`;
+          endpoint = `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&with_original_language=tl&region=PH&sort_by=popularity.desc&page=${pageNum}&include_adult=false&append_to_response=credits`;
         } else {
-          endpoint = `https://api.themoviedb.org/3/discover/tv?api_key=${API_KEY}&with_original_language=tl&sort_by=popularity.desc&page=${pageNum}&include_adult=false`;
+          endpoint = `https://api.themoviedb.org/3/discover/tv?api_key=${API_KEY}&with_original_language=tl&sort_by=popularity.desc&page=${pageNum}&include_adult=false&append_to_response=credits`;
         }
       }
       // Genre categories
@@ -406,19 +455,19 @@ function App() {
         const genreId = genreMap[cat];
         
         if (type === "movie") {
-          endpoint = `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&with_genres=${genreId}&sort_by=popularity.desc&page=${pageNum}&include_adult=false`;
+          endpoint = `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&with_genres=${genreId}&sort_by=popularity.desc&page=${pageNum}&include_adult=false&append_to_response=credits`;
         } else {
-          endpoint = `https://api.themoviedb.org/3/discover/tv?api_key=${API_KEY}&with_genres=${genreId}&sort_by=popularity.desc&page=${pageNum}&include_adult=false`;
+          endpoint = `https://api.themoviedb.org/3/discover/tv?api_key=${API_KEY}&with_genres=${genreId}&sort_by=popularity.desc&page=${pageNum}&include_adult=false&append_to_response=credits`;
         }
       }
       else if (type === "movie") {
-        endpoint = `https://api.themoviedb.org/3/movie/${cat}?api_key=${API_KEY}&page=${pageNum}`;
+        endpoint = `https://api.themoviedb.org/3/movie/${cat}?api_key=${API_KEY}&page=${pageNum}&append_to_response=credits`;
       } else {
         endpoint = cat === "upcoming" 
-          ? `https://api.themoviedb.org/3/tv/on_the_air?api_key=${API_KEY}&page=${pageNum}`
+          ? `https://api.themoviedb.org/3/tv/on_the_air?api_key=${API_KEY}&page=${pageNum}&append_to_response=credits`
           : cat === "now_playing"
-            ? `https://api.themoviedb.org/3/tv/on_the_air?api_key=${API_KEY}&page=${pageNum}`
-            : `https://api.themoviedb.org/3/tv/${cat}?api_key=${API_KEY}&page=${pageNum}`;
+            ? `https://api.themoviedb.org/3/tv/on_the_air?api_key=${API_KEY}&page=${pageNum}&append_to_response=credits`
+            : `https://api.themoviedb.org/3/tv/${cat}?api_key=${API_KEY}&page=${pageNum}&append_to_response=credits`;
       }
 
       const res = await fetch(endpoint);
@@ -484,7 +533,7 @@ function App() {
 
     try {
       const res = await fetch(
-        `https://api.themoviedb.org/3/search/${type}?api_key=${API_KEY}&query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=1`
+        `https://api.themoviedb.org/3/search/${type}?api_key=${API_KEY}&query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=1&append_to_response=credits`
       );
       
       const data = await res.json();
@@ -511,7 +560,7 @@ function App() {
       setLoading(true);
       setError(null);
       
-      const endpoint = `https://api.themoviedb.org/3/search/${type}?api_key=${API_KEY}&query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=1`;
+      const endpoint = `https://api.themoviedb.org/3/search/${type}?api_key=${API_KEY}&query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=1&append_to_response=credits`;
       
       const res = await fetch(endpoint);
       
@@ -669,6 +718,7 @@ function App() {
     }, 500);
   };
 
+  // ================= UPDATED: Reset to Home with Scroll to Top =================
   const resetToHome = () => {
     setSearch("");
     setSearchResults([]);
@@ -681,6 +731,10 @@ function App() {
     }
     setCategory("trending");
     setWatchUrl(null);
+    
+    // Scroll to top smoothly when clicking the logo
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    
     fetchTrending();
   };
 
@@ -809,7 +863,7 @@ function App() {
                   {suggestions.map((item) => (
                     <button
                       key={item.id}
-                      className="w-full px-4 py-3 text-left hover:bg-gray-800 flex items-center gap-3 transition-colors duration-200"
+                      className="w-full px-4 py-3 text-left hover:bg-gray-800 flex items-start gap-3 transition-colors duration-200"
                       onClick={() => handleSuggestionClick(item)}
                       onKeyDown={(e) => e.key === 'Enter' && handleSuggestionClick(item)}
                     >
@@ -819,11 +873,15 @@ function App() {
                         className="w-10 h-15 object-cover rounded"
                         loading="lazy"
                       />
-                      <div className="flex-1">
+                      <div className="flex-1 min-w-0">
                         <p className="font-medium truncate">{item.title || item.name}</p>
-                        <p className="text-gray-400 text-xs">
+                        <p className="text-gray-400 text-xs mt-1 line-clamp-2">
+                          {item.overview || 'No description available'}
+                        </p>
+                        <p className="text-gray-500 text-xs mt-1">
                           {item.release_date?.substring(0,4) || item.first_air_date?.substring(0,4) || "Unknown"}
                           {item.vote_average && ` • ⭐ ${item.vote_average.toFixed(1)}`}
+                          {item.credits?.cast?.[0] && ` • ${item.credits.cast[0].name}`}
                         </p>
                       </div>
                     </button>
@@ -952,9 +1010,14 @@ function App() {
                     <h1 className="text-3xl md:text-5xl font-bold mb-3 md:mb-4">
                       {featured.title || featured.name}
                     </h1>
-                    <p className="text-gray-300 mb-4 md:mb-6 line-clamp-2 md:line-clamp-3 text-sm md:text-base">
-                      {featured.overview}
-                    </p>
+                    
+                    {/* Enhanced Featured Description with Read More */}
+                    <div className="text-gray-300 mb-4 md:mb-6">
+                      <p className="text-sm md:text-base line-clamp-3">
+                        {featured.overview || "No description available."}
+                      </p>
+                    </div>
+                    
                     <div className="flex flex-wrap gap-3">
                       <button
                         onClick={() => startWatching(featured)}
@@ -969,12 +1032,34 @@ function App() {
                         </span>
                         <span>
                           {featured.release_date?.substring(0,4) || featured.first_air_date?.substring(0,4)}
-                          {(featured.original_language === 'tl' || 
-                            (featured.origin_country && featured.origin_country.includes('PH'))) && 
-                            <span className="ml-2 text-green-500">Tagalog</span>}
                         </span>
+                        {/* Runtime for movies */}
+                        {type === "movie" && (
+                          <span className="text-gray-400">• {formatRuntime(featured.runtime || "N/A")}</span>
+                        )}
+                        {/* Episode info for TV shows */}
+                        {type === "tv" && featured.episode_run_time?.[0] && (
+                          <span className="text-gray-400">• {featured.episode_run_time[0]}m/ep</span>
+                        )}
+                        {(featured.original_language === 'tl' || 
+                          (featured.origin_country && featured.origin_country.includes('PH'))) && 
+                          <span className="ml-2 text-green-500">Tagalog</span>}
                       </div>
                     </div>
+                    
+                    {/* Cast info for featured */}
+                    {featured.credits?.cast?.slice(0, 3).length > 0 && (
+                      <div className="mt-4">
+                        <p className="text-sm text-gray-400 mb-1">Starring:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {featured.credits.cast.slice(0, 3).map(person => (
+                            <span key={person.id} className="text-xs bg-gray-800 px-2 py-1 rounded">
+                              {person.name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
