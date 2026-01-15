@@ -48,7 +48,7 @@ class SimpleErrorBoundary extends React.Component {
   }
 }
 
-// ================= Movie Item Component =================
+// ================= Movie/TV Item Component =================
 const MovieItem = React.memo(({ item, type, onClick }) => {
   const [imgError, setImgError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -65,21 +65,52 @@ const MovieItem = React.memo(({ item, type, onClick }) => {
     }
   };
 
-  // Toggle description
   const toggleDescription = (e) => {
     e.stopPropagation();
     setShowFullDescription(!showFullDescription);
   };
 
-  // Check if movie is Tagalog
   const isTagalog = item.original_language === 'tl' || 
                      (item.origin_country && item.origin_country.includes('PH')) ||
                      (item.production_countries && item.production_countries.some(country => country.iso_3166_1 === 'PH'));
 
-  // Truncate description
   const truncatedDescription = item.overview 
     ? (showFullDescription ? item.overview : item.overview.substring(0, 80) + '...')
     : 'No description available';
+
+  // TV Show specific info
+  const renderTVShowInfo = () => {
+    if (type !== "tv") return null;
+    
+    return (
+      <div className="mt-1 space-y-1">
+        <div className="flex items-center gap-2 text-xs text-gray-400">
+          {item.first_air_date && (
+            <span>📅 {item.first_air_date.substring(0, 4)}</span>
+          )}
+          {item.number_of_seasons && (
+            <span>• {item.number_of_seasons} Season{item.number_of_seasons > 1 ? 's' : ''}</span>
+          )}
+          {item.number_of_episodes && (
+            <span>• {item.number_of_episodes} Episodes</span>
+          )}
+          {item.episode_run_time?.[0] && (
+            <span>• {item.episode_run_time[0]}m</span>
+          )}
+        </div>
+        
+        {item.status && (
+          <div className={`text-xs px-2 py-1 rounded-full inline-block ${
+            item.status === 'Returning Series' ? 'bg-green-900/30 text-green-400' :
+            item.status === 'Ended' ? 'bg-red-900/30 text-red-400' :
+            'bg-gray-800 text-gray-300'
+          }`}>
+            {item.status}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div
@@ -88,10 +119,9 @@ const MovieItem = React.memo(({ item, type, onClick }) => {
       className="group cursor-pointer focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:ring-offset-black rounded-xl"
       onClick={handleClick}
       onKeyDown={handleKeyDown}
-      aria-label={`Watch ${item.title || item.name}${isTagalog ? ' (Tagalog Movie)' : ''}`}
+      aria-label={`Watch ${item.title || item.name}${isTagalog ? ' (Tagalog)' : ''}`}
     >
       <div className="relative overflow-hidden rounded-xl aspect-[2/3] mb-2">
-        {/* Loading Skeleton */}
         {isLoading && (
           <div className="absolute inset-0 bg-gray-800 animate-pulse rounded-xl" />
         )}
@@ -121,7 +151,6 @@ const MovieItem = React.memo(({ item, type, onClick }) => {
           ⭐ {item.vote_average?.toFixed(1) || "N/A"}
         </div>
         
-        {/* Tagalog badge */}
         {isTagalog && (
           <div className="absolute top-2 left-2 bg-green-600 px-2 py-1 rounded-full text-xs font-bold">
             Tagalog
@@ -133,15 +162,18 @@ const MovieItem = React.memo(({ item, type, onClick }) => {
         {item.title || item.name}
       </h3>
       
+      {renderTVShowInfo()}
+      
       <div className="space-y-2">
-        <p className="text-gray-400 text-xs md:text-sm">
-          {item.release_date?.substring(0,4) || item.first_air_date?.substring(0,4) || "Unknown"}
-          {type === "movie" && item.runtime && (
-            <span className="ml-2">• {formatRuntime(item.runtime)}</span>
-          )}
-        </p>
+        {type === "movie" && (
+          <p className="text-gray-400 text-xs md:text-sm">
+            {item.release_date?.substring(0,4) || "Unknown"}
+            {item.runtime && (
+              <span className="ml-2">• {formatRuntime(item.runtime)}</span>
+            )}
+          </p>
+        )}
         
-        {/* Movie Description */}
         <div className="text-gray-300 text-xs">
           <p className={`${!showFullDescription ? 'line-clamp-2' : ''} mb-1`}>
             {truncatedDescription}
@@ -157,7 +189,6 @@ const MovieItem = React.memo(({ item, type, onClick }) => {
           )}
         </div>
         
-        {/* Cast preview */}
         {item.credits?.cast?.slice(0, 2).length > 0 && (
           <p className="text-xs text-gray-500 truncate">
             With: {item.credits.cast.slice(0, 2).map(p => p.name).join(', ')}
@@ -170,12 +201,402 @@ const MovieItem = React.memo(({ item, type, onClick }) => {
 
 MovieItem.displayName = 'MovieItem';
 
+// ================= TV Show Details Component =================
+const TVShowDetails = ({ show, onClose, onPlayEpisode }) => {
+  const [seasons, setSeasons] = useState([]);
+  const [selectedSeason, setSelectedSeason] = useState(1);
+  const [episodes, setEpisodes] = useState([]);
+  const [loadingEpisodes, setLoadingEpisodes] = useState(false);
+  const [showCredits, setShowCredits] = useState(false);
+
+  // Memoize fetchEpisodes to fix dependency warning
+  const fetchEpisodes = useCallback(async (seasonNumber) => {
+    setLoadingEpisodes(true);
+    try {
+      const response = await fetch(
+        `https://api.themoviedb.org/3/tv/${show.id}/season/${seasonNumber}?api_key=${API_KEY}`
+      );
+      const data = await response.json();
+      setEpisodes(data.episodes || []);
+      setSelectedSeason(seasonNumber);
+    } catch (error) {
+      console.error('Error fetching episodes:', error);
+    } finally {
+      setLoadingEpisodes(false);
+    }
+  }, [show]);
+
+  // Fetch seasons on component mount
+  useEffect(() => {
+    if (!show?.id) return;
+
+    const fetchSeasons = async () => {
+      try {
+        const response = await fetch(
+          `https://api.themoviedb.org/3/tv/${show.id}?api_key=${API_KEY}&append_to_response=credits,content_ratings`
+        );
+        const data = await response.json();
+        setSeasons(data.seasons || []);
+        
+        if (data.seasons?.[0]) {
+          // Fetch episodes for first season
+          fetchEpisodes(data.seasons[0].season_number);
+        }
+      } catch (error) {
+        console.error('Error fetching seasons:', error);
+      }
+    };
+
+    fetchSeasons();
+  }, [show, fetchEpisodes]); // Added fetchEpisodes to dependencies
+
+  // Keyboard navigation with proper dependencies
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        if (!seasons.length) return;
+        
+        const currentIndex = seasons.findIndex(s => s.season_number === selectedSeason);
+        let nextIndex;
+        
+        if (e.key === 'ArrowRight') {
+          nextIndex = currentIndex < seasons.length - 1 ? currentIndex + 1 : 0;
+        } else {
+          nextIndex = currentIndex > 0 ? currentIndex - 1 : seasons.length - 1;
+        }
+        
+        if (seasons[nextIndex]) {
+          fetchEpisodes(seasons[nextIndex].season_number);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [seasons, selectedSeason, onClose, fetchEpisodes]);
+
+  const formatRuntime = (minutes) => {
+    if (!minutes) return "N/A";
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+  };
+
+  const playFirstEpisode = () => {
+    if (episodes.length > 0) {
+      onPlayEpisode(show, selectedSeason, 1);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/95 z-50 overflow-y-auto">
+      <div 
+        className="absolute inset-0 bg-cover bg-center opacity-20"
+        style={{ 
+          backgroundImage: `url(https://image.tmdb.org/t/p/original${show.backdrop_path})` 
+        }}
+      />
+      
+      <button
+        onClick={onClose}
+        className="absolute top-4 right-4 z-10 text-white text-2xl bg-black/50 rounded-full w-10 h-10 flex items-center justify-center hover:bg-black/80 transition-colors"
+        aria-label="Close"
+      >
+        ✕
+      </button>
+      
+      <div className="relative z-10 max-w-7xl mx-auto px-4 py-8">
+        {/* Show Header */}
+        <div className="flex flex-col lg:flex-row gap-8 mb-8">
+          <div className="lg:w-1/4">
+            <img
+              src={
+                show.poster_path
+                  ? `https://image.tmdb.org/t/p/w500${show.poster_path}`
+                  : "https://via.placeholder.com/300x450/111/666?text=No+Poster"
+              }
+              alt={show.name}
+              className="rounded-xl shadow-2xl w-full"
+            />
+          </div>
+          
+          <div className="lg:w-3/4">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h1 className="text-4xl md:text-5xl font-bold mb-2">{show.name}</h1>
+                <div className="flex items-center gap-3 text-gray-300 mb-4">
+                  <span className="bg-gray-800 px-3 py-1 rounded-full">
+                    ⭐ {show.vote_average?.toFixed(1)} ({show.vote_count} votes)
+                  </span>
+                  <span>{show.first_air_date?.substring(0, 4)}</span>
+                  <span>• {show.number_of_seasons} Season{show.number_of_seasons > 1 ? 's' : ''}</span>
+                  <span>• {show.number_of_episodes} Episodes</span>
+                  {show.episode_run_time?.[0] && (
+                    <span>• {formatRuntime(show.episode_run_time[0])}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            {/* Genres */}
+            {show.genres?.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-4">
+                {show.genres.map(genre => (
+                  <span
+                    key={genre.id}
+                    className="px-3 py-1 bg-gray-800 rounded-full text-sm"
+                  >
+                    {genre.name}
+                  </span>
+                ))}
+              </div>
+            )}
+            
+            {/* Overview */}
+            <div className="mb-6">
+              <h3 className="text-xl font-bold mb-2">Overview</h3>
+              <p className="text-gray-300 leading-relaxed">{show.overview}</p>
+            </div>
+            
+            {/* Show Info Grid */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div>
+                <h4 className="text-gray-400 text-sm">Status</h4>
+                <p className="font-semibold">{show.status}</p>
+              </div>
+              <div>
+                <h4 className="text-gray-400 text-sm">Type</h4>
+                <p className="font-semibold">{show.type}</p>
+              </div>
+              <div>
+                <h4 className="text-gray-400 text-sm">Language</h4>
+                <p className="font-semibold">
+                  {show.original_language === 'en' ? 'English' : 
+                   show.original_language === 'tl' ? 'Tagalog' : 
+                   show.original_language?.toUpperCase()}
+                </p>
+              </div>
+              <div>
+                <h4 className="text-gray-400 text-sm">Last Air Date</h4>
+                <p className="font-semibold">{show.last_air_date || 'N/A'}</p>
+              </div>
+            </div>
+            
+            {/* Networks */}
+            {show.networks?.length > 0 && (
+              <div className="mb-6">
+                <h4 className="text-gray-400 text-sm mb-2">Networks</h4>
+                <div className="flex gap-3">
+                  {show.networks.map(network => (
+                    <div key={network.id} className="flex items-center gap-2 bg-gray-900/50 px-3 py-2 rounded-lg">
+                      {network.logo_path && (
+                        <img
+                          src={`https://image.tmdb.org/t/p/w45${network.logo_path}`}
+                          alt={network.name}
+                          className="h-6"
+                        />
+                      )}
+                      <span className="text-sm">{network.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {/* Action Buttons */}
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={playFirstEpisode}
+                className="bg-red-600 hover:bg-red-700 px-6 py-3 rounded-lg font-semibold transition-colors duration-300 flex items-center gap-2"
+              >
+                <span>▶</span> Play First Episode
+              </button>
+              
+              <button
+                onClick={() => setShowCredits(!showCredits)}
+                className="bg-gray-800 hover:bg-gray-700 px-6 py-3 rounded-lg font-semibold transition-colors duration-300"
+              >
+                {showCredits ? 'Hide Cast' : 'Show Cast'}
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        {/* Cast (Collapsible) */}
+        {showCredits && show.credits?.cast?.length > 0 && (
+          <div className="mb-8">
+            <h2 className="text-2xl font-bold mb-4">Cast</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+              {show.credits.cast.slice(0, 10).map(person => (
+                <div key={person.id} className="bg-gray-900/50 rounded-lg p-3">
+                  {person.profile_path ? (
+                    <img
+                      src={`https://image.tmdb.org/t/p/w185${person.profile_path}`}
+                      alt={person.name}
+                      className="w-full h-48 object-cover rounded-lg mb-3"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="w-full h-48 bg-gray-800 rounded-lg flex items-center justify-center mb-3">
+                      <span className="text-gray-400">No image</span>
+                    </div>
+                  )}
+                  <h4 className="font-semibold truncate">{person.name}</h4>
+                  <p className="text-gray-400 text-sm truncate">{person.character}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        {/* Seasons Selector */}
+        <div className="mb-8">
+          <h2 className="text-2xl font-bold mb-4">Seasons</h2>
+          <div className="flex flex-wrap gap-2">
+            {seasons
+              .filter(season => season.season_number > 0)
+              .map(season => (
+                <button
+                  key={season.id}
+                  onClick={() => fetchEpisodes(season.season_number)}
+                  className={`px-4 py-2 rounded-lg transition-colors duration-300 ${
+                    selectedSeason === season.season_number
+                      ? 'bg-red-600'
+                      : 'bg-gray-800 hover:bg-gray-700'
+                  }`}
+                >
+                  Season {season.season_number}
+                  {season.air_date && (
+                    <span className="text-gray-300 text-sm ml-2">
+                      ({season.air_date.substring(0, 4)})
+                    </span>
+                  )}
+                </button>
+              ))}
+          </div>
+        </div>
+        
+        {/* Episodes List */}
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-2xl font-bold">
+              Season {selectedSeason} Episodes
+              <span className="text-gray-400 text-lg ml-2">
+                ({episodes.length} episodes)
+              </span>
+            </h2>
+            <button
+              onClick={playFirstEpisode}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-medium transition-colors duration-300 flex items-center gap-2"
+            >
+              <span>▶</span> Play All
+            </button>
+          </div>
+          
+          {loadingEpisodes ? (
+            <div className="text-center py-8">
+              <div className="inline-block w-8 h-8 border-2 border-red-600 border-t-transparent rounded-full animate-spin"></div>
+              <p className="mt-2 text-gray-400">Loading episodes...</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {episodes.map(episode => (
+                <div
+                  key={episode.id}
+                  className="bg-gray-900/50 rounded-lg p-4 hover:bg-gray-800/50 transition-colors duration-300 cursor-pointer border-l-3 border-transparent hover:border-red-600"
+                  onClick={() => onPlayEpisode(show, selectedSeason, episode.episode_number)}
+                >
+                  <div className="flex gap-4">
+                    <div className="flex-shrink-0 w-12 h-12 bg-gray-800 rounded-lg flex items-center justify-center relative">
+                      <span className="font-bold">E{episode.episode_number}</span>
+                      <span className="absolute text-gray-400 text-xs -top-2 left-2">E</span>
+                    </div>
+                    
+                    <div className="flex-1">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h3 className="font-semibold text-lg mb-1">{episode.name}</h3>
+                          <div className="flex items-center gap-3 text-gray-400 text-sm mb-2">
+                            <span>⭐ {episode.vote_average?.toFixed(1) || 'N/A'}</span>
+                            {episode.runtime && (
+                              <span>• {formatRuntime(episode.runtime)}</span>
+                            )}
+                            {episode.air_date && (
+                              <span>• {episode.air_date}</span>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onPlayEpisode(show, selectedSeason, episode.episode_number);
+                          }}
+                          className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors duration-300 flex items-center gap-2"
+                        >
+                          <span>▶</span> Play
+                        </button>
+                      </div>
+                      
+                      {episode.overview && (
+                        <p className="text-gray-300 text-sm line-clamp-2 mb-2">{episode.overview}</p>
+                      )}
+                      
+                      {episode.guest_stars?.slice(0, 3).length > 0 && (
+                        <div className="mt-2">
+                          <span className="text-gray-400 text-xs">With: </span>
+                          <span className="text-gray-300 text-xs">
+                            {episode.guest_stars.slice(0, 3).map(star => star.name).join(', ')}
+                            {episode.guest_stars.length > 3 && '...'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        
+        {/* Additional Info */}
+        <div className="bg-gray-900/30 rounded-lg p-6 mb-8">
+          <h3 className="text-xl font-bold mb-4">Series Information</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <h4 className="text-gray-400 text-sm mb-1">Created By</h4>
+              <p className="font-medium">
+                {show.created_by?.map(creator => creator.name).join(', ') || 'N/A'}
+              </p>
+            </div>
+            <div>
+              <h4 className="text-gray-400 text-sm mb-1">Original Network</h4>
+              <p className="font-medium">
+                {show.networks?.[0]?.name || 'N/A'}
+              </p>
+            </div>
+            <div>
+              <h4 className="text-gray-400 text-sm mb-1">First Aired</h4>
+              <p className="font-medium">{show.first_air_date || 'N/A'}</p>
+            </div>
+            <div>
+              <h4 className="text-gray-400 text-sm mb-1">Last Aired</h4>
+              <p className="font-medium">{show.last_air_date || 'N/A'}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ================= Main App Component =================
 function App() {
   const [movies, setMovies] = useState([]);
   const [featured, setFeatured] = useState(null);
   const [category, setCategory] = useState("trending");
-  const [type, setType] = useState("movie");
   const [search, setSearch] = useState("");
   const [watchUrl, setWatchUrl] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -183,6 +604,11 @@ function App() {
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
+  
+  // TV Show states
+  const [selectedTVShow, setSelectedTVShow] = useState(null);
+  const [showTVDetails, setShowTVDetails] = useState(false);
+  const [showTVSeriesPage, setShowTVSeriesPage] = useState(false);
   
   // Load More functionality states
   const [page, setPage] = useState(1);
@@ -211,13 +637,11 @@ function App() {
   const loadPopAds = useCallback(() => {
     const now = Date.now();
     
-    // Don't load ads too frequently
     if (now - lastAdTimeRef.current < adCooldown) {
       console.log('⏳ Ad cooldown active, skipping');
       return;
     }
     
-    // Don't reload ads if already loaded
     if (adsLoaded) {
       console.log('✅ Ads already loaded');
       return;
@@ -225,23 +649,18 @@ function App() {
 
     console.log('🚀 ATTEMPTING TO LOAD POPADS...');
     
-    // Method 1: Direct script injection (most reliable)
     const injectPopAdsScript = () => {
       return new Promise((resolve) => {
         try {
-          // Clean up any existing scripts
           document.querySelectorAll('script').forEach(script => {
             if (script.textContent && script.textContent.includes('a8876ec4588517dc1fe664b0e6812854')) {
               script.remove();
             }
           });
 
-          // Create script element
           const script = document.createElement('script');
           script.type = 'text/javascript';
           script.setAttribute('data-cfasync', 'false');
-          
-          // Your PopAds code
           script.textContent = `/*<![CDATA[/* */(function(){var x=window,v="a8876ec4588517dc1fe664b0e6812854",d=[["siteId",847*577+608*61*11+4371892],["minBid",0],["popundersPerIP","0"],["delayBetween",0],["default",false],["defaultPerDay",0],["topmostLayer","auto"]],u=["d3d3LmRpc3BsYXl2ZXJ0aXNpbmcuY29tL3lpbnN0YWZldGNoLm1pbi5jc3M=","ZDNtem9rdHk5NTFjNXcuY2xvdWRmcm9udC5uZXQvY2pYYnQvZ2pzb25saW50Lm1pbi5qcw=="],e=-1,m,c,n=function(){clearTimeout(c);e++;if(u[e]&&!(1794245271000<(new Date).getTime()&&1<e)){m=x.document.createElement("script");m.type="text/javascript";m.async=!0;var i=x.document.getElementsByTagName("script")[0];m.src="https://"+atob(u[e]);m.crossOrigin="anonymous";m.onerror=n;m.onload=function(){clearTimeout(c);x[v.slice(0,16)+v.slice(0,16)]||n()};c=setTimeout(n,5E3);i.parentNode.insertBefore(m,i)}};if(!x[v]){try{Object.freeze(x[v]=d)}catch(e){}n()}})();/*]]>/* */`;
           
           script.onload = () => {
@@ -264,7 +683,6 @@ function App() {
             resolve(false);
           };
           
-          // Append to body (more reliable than head)
           document.body.appendChild(script);
           
         } catch (error) {
@@ -274,7 +692,6 @@ function App() {
       });
     };
 
-    // Method 2: Iframe injection (bypasses some blockers)
     const injectViaIframe = () => {
       return new Promise((resolve) => {
         try {
@@ -286,18 +703,17 @@ function App() {
               <head>
                 <script type="text/javascript">
                   try {
-                    ${`/*<![CDATA[/* */(function(){var x=window,v="a8876ec4588517dc1fe664b0e6812854",d=[["siteId",847*577+608*61*11+4371892],["minBid",0],["popundersPerIP","0"],["delayBetween",0],["default",false],["defaultPerDay",0],["topmostLayer","auto"]],u=["d3d3LmRpc3BsYXl2ZXJ0aXNpbmcuY29tL3lpbnN0YWZldGNoLm1pbi5jc3M=","ZDNtem9rdHk5NTFjNXcuY2xvdWRmcm9udC5uZXQvY2pYYnQvZ2pzb25saW50Lm1pbi5qcw=="],e=-1,m,c,n=function(){clearTimeout(c);e++;if(u[e]&&!(1794245271000<(new Date).getTime()&&1<e)){m=x.document.createElement("script");m.type="text/javascript";m.async=!0;var i=x.document.getElementsByTagName("script")[0];m.src="https://"+atob(u[e]);m.crossOrigin="anonymous";m.onerror=n;m.onload=function(){clearTimeout(c);x[v.slice(0,16)+v.slice(0,16)]||n()};c=setTimeout(n,5E3);i.parentNode.insertBefore(m,i)}};if(!x[v]){try{Object.freeze(x[v]=d)}catch(e){}n()}})();/*]]>/* */`}
+                    /*<![CDATA[/* */(function(){var x=window,v="a8876ec4588517dc1fe664b0e6812854",d=[["siteId",847*577+608*61*11+4371892],["minBid",0],["popundersPerIP","0"],["delayBetween",0],["default",false],["defaultPerDay",0],["topmostLayer","auto"]],u=["d3d3LmRpc3BsYXl2ZXJ0aXNpbmcuY29tL3lpbnN0YWZldGNoLm1pbi5jc3M=","ZDNtem9rdHk5NTFjNXcuY2xvdWRmcm9udC5uZXQvY2pYYnQvZ2pzb25saW50Lm1pbi5qcw=="],e=-1,m,c,n=function(){clearTimeout(c);e++;if(u[e]&&!(1794245271000<(new Date).getTime()&&1<e)){m=x.document.createElement("script");m.type="text/javascript";m.async=!0;var i=x.document.getElementsByTagName("script")[0];m.src="https://"+atob(u[e]);m.crossOrigin="anonymous";m.onerror=n;m.onload=function(){clearTimeout(c);x[v.slice(0,16)+v.slice(0,16)]||n()};c=setTimeout(n,5E3);i.parentNode.insertBefore(m,i)}};if(!x[v]){try{Object.freeze(x[v]=d)}catch(e){}n()}})();/*]]>/* */
                     parent.postMessage('popads-loaded', '*');
                   } catch(e) {
                     parent.postMessage('popads-error', '*');
                   }
-                <\/script>
+                </script>
               </head>
               <body></body>
             </html>
           `;
           
-          // Listen for messages from iframe
           const messageHandler = (event) => {
             if (event.data === 'popads-loaded') {
               console.log('✅ PopAds loaded via iframe');
@@ -317,7 +733,6 @@ function App() {
           window.addEventListener('message', messageHandler);
           document.body.appendChild(iframe);
           
-          // Timeout after 5 seconds
           setTimeout(() => {
             window.removeEventListener('message', messageHandler);
             if (document.body.contains(iframe)) {
@@ -334,23 +749,17 @@ function App() {
       });
     };
 
-    // Try loading ads with multiple methods
     const tryAllMethods = async () => {
       console.log('Trying Method 1: Direct injection...');
       const method1Success = await injectPopAdsScript();
       
       if (!method1Success) {
         console.log('Method 1 failed, trying Method 2: Iframe...');
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+        await new Promise(resolve => setTimeout(resolve, 1000));
         const method2Success = await injectViaIframe();
         
         if (!method2Success) {
           console.log('❌ All ad loading methods failed');
-          console.log('Possible reasons:');
-          console.log('1. Ad blocker detected');
-          console.log('2. Browser privacy settings');
-          console.log('3. Network firewall blocking');
-          console.log('4. PopAds requires more site traffic');
         }
       }
     };
@@ -360,7 +769,6 @@ function App() {
 
   // ================= Load initial ads after delay =================
   useEffect(() => {
-    // Initial ad load after 5 seconds (once user has seen the page)
     const initialTimer = setTimeout(() => {
       loadPopAds();
     }, 5000);
@@ -378,13 +786,13 @@ function App() {
     }
   }, []);
 
-  // ================= UPDATED: More Categories =================
-  const categoryLabels = useMemo(() => ({
+  // ================= UPDATED: Categories for Movies and TV Series =================
+  const movieCategoryLabels = useMemo(() => ({
     trending: "🔥 Trending",
     popular: "⭐ Popular", 
     top_rated: "🏆 Top Rated",
-    upcoming: type === "movie" ? "📅 Upcoming" : "📅 Airing Today",
-    now_playing: type === "movie" ? "🎬 Now Playing" : "🎬 On Air",
+    upcoming: "📅 Upcoming",
+    now_playing: "🎬 Now Playing",
     filipino: "🎭 Tagalog Movie",
     action: "💥 Action",
     comedy: "😂 Comedy", 
@@ -394,7 +802,26 @@ function App() {
     thriller: "🔪 Thriller",
     scifi: "🚀 Sci-Fi",
     animation: "🐭 Animation"
-  }), [type]);
+  }), []);
+
+  const tvCategoryLabels = useMemo(() => ({
+    popular_tv: "🔥 Popular TV",
+    top_rated_tv: "🏆 Top Rated TV",
+    on_the_air: "📺 On The Air",
+    airing_today: "🎬 Airing Today",
+    tv_action: "💥 Action & Adventure",
+    tv_comedy: "😂 Comedy",
+    tv_drama: "🎭 Drama",
+    tv_scifi: "🚀 Sci-Fi & Fantasy",
+    tv_animation: "🐭 Animation",
+    tagalog_tv: "🇵🇭 Tagalog TV",
+    tv_mystery: "🔍 Mystery",
+    tv_reality: "🎤 Reality",
+    tv_documentary: "📚 Documentary"
+  }), []);
+
+  // Current category labels based on page
+  const currentCategoryLabels = showTVSeriesPage ? tvCategoryLabels : movieCategoryLabels;
 
   // ================= UPDATED: API Functions with Load More =================
   const fetchTrending = useCallback(async (pageNum = 1) => {
@@ -402,7 +829,7 @@ function App() {
       setLoading(true);
       setError(null);
       const res = await fetch(
-        `https://api.themoviedb.org/3/trending/${type}/week?api_key=${API_KEY}&page=${pageNum}&append_to_response=credits`
+        `https://api.themoviedb.org/3/trending/${showTVSeriesPage ? 'tv' : 'movie'}/week?api_key=${API_KEY}&page=${pageNum}&append_to_response=credits`
       );
       
       if (!res.ok) throw new Error("Failed to fetch");
@@ -424,7 +851,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [type, errorMessages]);
+  }, [showTVSeriesPage, errorMessages]);
 
   const fetchByCategory = useCallback(async (cat, pageNum = 1) => {
     try {
@@ -432,42 +859,58 @@ function App() {
       setError(null);
       let endpoint = "";
       
-      if (cat === "filipino") {
-        // Special endpoint for Tagalog movies
-        if (type === "movie") {
-          endpoint = `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&with_original_language=tl&region=PH&sort_by=popularity.desc&page=${pageNum}&include_adult=false&append_to_response=credits`;
-        } else {
-          endpoint = `https://api.themoviedb.org/3/discover/tv?api_key=${API_KEY}&with_original_language=tl&sort_by=popularity.desc&page=${pageNum}&include_adult=false&append_to_response=credits`;
-        }
-      }
-      // Genre categories
-      else if (["action", "comedy", "drama", "horror", "romance", "thriller", "scifi", "animation"].includes(cat)) {
-        const genreMap = {
-          action: 28,
-          comedy: 35,
-          drama: 18,
-          horror: 27,
-          romance: 10749,
-          thriller: 53,
-          scifi: 878,
-          animation: 16
+      if (showTVSeriesPage) {
+        // TV SERIES PAGE CATEGORIES
+        const tvCatMap = {
+          'popular_tv': 'popular',
+          'top_rated_tv': 'top_rated',
+          'on_the_air': 'on_the_air',
+          'airing_today': 'airing_today',
+          'tv_action': 10759, // Action & Adventure
+          'tv_comedy': 35,
+          'tv_drama': 18,
+          'tv_scifi': 10765, // Sci-Fi & Fantasy
+          'tv_animation': 16,
+          'tagalog_tv': 'tagalog_tv',
+          'tv_mystery': 9648,
+          'tv_reality': 10764,
+          'tv_documentary': 99
         };
-        const genreId = genreMap[cat];
         
-        if (type === "movie") {
-          endpoint = `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&with_genres=${genreId}&sort_by=popularity.desc&page=${pageNum}&include_adult=false&append_to_response=credits`;
+        const tvCat = tvCatMap[cat];
+        
+        if (typeof tvCat === 'number') {
+          // Genre-based TV shows
+          endpoint = `https://api.themoviedb.org/3/discover/tv?api_key=${API_KEY}&with_genres=${tvCat}&sort_by=popularity.desc&page=${pageNum}&include_adult=false&append_to_response=credits`;
+        } else if (tvCat === 'tagalog_tv') {
+          // Tagalog TV shows
+          endpoint = `https://api.themoviedb.org/3/discover/tv?api_key=${API_KEY}&with_original_language=tl&sort_by=popularity.desc&page=${pageNum}&include_adult=false&append_to_response=credits`;
         } else {
-          endpoint = `https://api.themoviedb.org/3/discover/tv?api_key=${API_KEY}&with_genres=${genreId}&sort_by=popularity.desc&page=${pageNum}&include_adult=false&append_to_response=credits`;
+          // Standard TV categories
+          endpoint = `https://api.themoviedb.org/3/tv/${tvCat}?api_key=${API_KEY}&page=${pageNum}&append_to_response=credits`;
         }
-      }
-      else if (type === "movie") {
-        endpoint = `https://api.themoviedb.org/3/movie/${cat}?api_key=${API_KEY}&page=${pageNum}&append_to_response=credits`;
       } else {
-        endpoint = cat === "upcoming" 
-          ? `https://api.themoviedb.org/3/tv/on_the_air?api_key=${API_KEY}&page=${pageNum}&append_to_response=credits`
-          : cat === "now_playing"
-            ? `https://api.themoviedb.org/3/tv/on_the_air?api_key=${API_KEY}&page=${pageNum}&append_to_response=credits`
-            : `https://api.themoviedb.org/3/tv/${cat}?api_key=${API_KEY}&page=${pageNum}&append_to_response=credits`;
+        // MOVIE PAGE CATEGORIES
+        if (cat === "filipino") {
+          endpoint = `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&with_original_language=tl&region=PH&sort_by=popularity.desc&page=${pageNum}&include_adult=false&append_to_response=credits`;
+        }
+        else if (["action", "comedy", "drama", "horror", "romance", "thriller", "scifi", "animation"].includes(cat)) {
+          const genreMap = {
+            action: 28,
+            comedy: 35,
+            drama: 18,
+            horror: 27,
+            romance: 10749,
+            thriller: 53,
+            scifi: 878,
+            animation: 16
+          };
+          const genreId = genreMap[cat];
+          endpoint = `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&with_genres=${genreId}&sort_by=popularity.desc&page=${pageNum}&include_adult=false&append_to_response=credits`;
+        }
+        else {
+          endpoint = `https://api.themoviedb.org/3/movie/${cat}?api_key=${API_KEY}&page=${pageNum}&append_to_response=credits`;
+        }
       }
 
       const res = await fetch(endpoint);
@@ -492,7 +935,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [type, errorMessages]);
+  }, [showTVSeriesPage, errorMessages]);
 
   // ================= FIXED: Load More Function with useCallback =================
   const handleLoadMore = useCallback(() => {
@@ -532,8 +975,9 @@ function App() {
     }
 
     try {
+      const currentType = showTVSeriesPage ? 'tv' : 'movie';
       const res = await fetch(
-        `https://api.themoviedb.org/3/search/${type}?api_key=${API_KEY}&query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=1&append_to_response=credits`
+        `https://api.themoviedb.org/3/search/${currentType}?api_key=${API_KEY}&query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=1&append_to_response=credits`
       );
       
       const data = await res.json();
@@ -541,7 +985,7 @@ function App() {
     } catch (err) {
       setSuggestions([]);
     }
-  }, [type]);
+  }, [showTVSeriesPage]);
 
   const performSearch = useCallback(async (query) => {
     if (!query.trim()) {
@@ -560,7 +1004,8 @@ function App() {
       setLoading(true);
       setError(null);
       
-      const endpoint = `https://api.themoviedb.org/3/search/${type}?api_key=${API_KEY}&query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=1&append_to_response=credits`;
+      const currentType = showTVSeriesPage ? 'tv' : 'movie';
+      const endpoint = `https://api.themoviedb.org/3/search/${currentType}?api_key=${API_KEY}&query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=1&append_to_response=credits`;
       
       const res = await fetch(endpoint);
       
@@ -582,7 +1027,7 @@ function App() {
       setIsSearching(false);
       setLoading(false);
     }
-  }, [type, category, fetchTrending, fetchByCategory, errorMessages]);
+  }, [showTVSeriesPage, category, fetchTrending, fetchByCategory, errorMessages]);
 
   // ================= Enhanced Search Handler =================
   const handleSearchChange = (e) => {
@@ -606,16 +1051,13 @@ function App() {
     if (value.trim().length >= 2) {
       setIsSearching(true);
       
-      // Debounced search suggestions
       typingTimeoutRef.current = setTimeout(() => {
         fetchSearchSuggestions(value);
       }, 300);
       
-      // Debounced full search
       typingTimeoutRef.current = setTimeout(() => {
         performSearch(value);
         
-        // Load ads after search (with a small delay)
         setTimeout(() => {
           loadPopAds();
         }, 1000);
@@ -652,28 +1094,27 @@ function App() {
         clearTimeout(typingTimeoutRef.current);
       }
     };
-  }, [category, type, search, fetchTrending, fetchByCategory]);
+  }, [category, showTVSeriesPage, search, fetchTrending, fetchByCategory]);
 
   // ================= Local Storage for Preferences =================
   useEffect(() => {
     const preferences = {
-      type,
+      showTVSeriesPage,
       category,
       lastSearch: search
     };
     localStorage.setItem('moviehouse_prefs', JSON.stringify(preferences));
-  }, [type, category, search]);
+  }, [showTVSeriesPage, category, search]);
 
   useEffect(() => {
     const saved = localStorage.getItem('moviehouse_prefs');
     if (saved) {
       try {
         const prefs = JSON.parse(saved);
-        setType(prefs.type || 'movie');
+        setShowTVSeriesPage(prefs.showTVSeriesPage || false);
         setCategory(prefs.category || 'trending');
         if (prefs.lastSearch && prefs.lastSearch.trim()) {
           setSearch(prefs.lastSearch);
-          // Don't auto-search on load, just restore the search term
         }
       } catch (e) {
         console.error('Failed to load preferences:', e);
@@ -702,20 +1143,44 @@ function App() {
     performSearch(item.title || item.name);
   };
 
+  // ================= Enhanced Watch Function =================
   const startWatching = (item) => {
     if (!item?.id) return;
     
-    // Load ads when user clicks to watch
+    // If on TV Series page, show details modal
+    if (showTVSeriesPage) {
+      setSelectedTVShow(item);
+      setShowTVDetails(true);
+      return;
+    }
+    
+    // For movies, load ads and play
     loadPopAds();
     
-    // Then proceed to load the movie
     setTimeout(() => {
-      const url = type === "movie"
-        ? `https://vidsrc.to/embed/movie/${item.id}`
-        : `https://vidsrc.to/embed/tv/${item.id}`;
+      const url = `https://vidsrc.to/embed/movie/${item.id}`;
       setWatchUrl(url);
       window.scrollTo({ top: 0, behavior: "smooth" });
     }, 500);
+  };
+
+  // ================= Play TV Episode =================
+  const playEpisode = (show, seasonNumber, episodeNumber) => {
+    loadPopAds();
+    
+    setTimeout(() => {
+      const url = `https://vidsrc.to/embed/tv/${show.id}/${seasonNumber}/${episodeNumber}`;
+      setWatchUrl(url);
+      setShowTVDetails(false);
+      setSelectedTVShow(null);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }, 500);
+  };
+
+  // ================= Close TV Details =================
+  const closeTVDetails = () => {
+    setShowTVDetails(false);
+    setSelectedTVShow(null);
   };
 
   // ================= UPDATED: Reset to Home with Scroll to Top =================
@@ -731,11 +1196,53 @@ function App() {
     }
     setCategory("trending");
     setWatchUrl(null);
+    setShowTVDetails(false);
+    setSelectedTVShow(null);
+    setShowTVSeriesPage(false);
     
-    // Scroll to top smoothly when clicking the logo
     window.scrollTo({ top: 0, behavior: "smooth" });
     
     fetchTrending();
+  };
+
+  // ================= Switch to TV Series Page =================
+  const goToTVSeries = () => {
+    setShowTVSeriesPage(true);
+    setCategory("popular_tv");
+    setPage(1);
+    setHasMore(true);
+    setSearch("");
+    setSearchResults([]);
+    setSuggestions([]);
+    setWatchUrl(null);
+    setShowTVDetails(false);
+    setSelectedTVShow(null);
+    
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    
+    setTimeout(() => {
+      loadPopAds();
+    }, 1000);
+  };
+
+  // ================= Switch to Movies Page =================
+  const goToMovies = () => {
+    setShowTVSeriesPage(false);
+    setCategory("trending");
+    setPage(1);
+    setHasMore(true);
+    setSearch("");
+    setSearchResults([]);
+    setSuggestions([]);
+    setWatchUrl(null);
+    setShowTVDetails(false);
+    setSelectedTVShow(null);
+    
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    
+    setTimeout(() => {
+      loadPopAds();
+    }, 1000);
   };
 
   // ================= NEW: Handle category change =================
@@ -747,20 +1254,6 @@ function App() {
     setSearchResults([]);
     setSuggestions([]);
     
-    // Load ads when changing categories (with small delay)
-    setTimeout(() => {
-      loadPopAds();
-    }, 1000);
-  };
-
-  // ================= Handle type change (Movie/TV) =================
-  const handleTypeChange = (newType) => {
-    setType(newType);
-    handleClearSearch();
-    setPage(1);
-    setHasMore(true);
-    
-    // Load ads when switching between movies and TV shows
     setTimeout(() => {
       loadPopAds();
     }, 1000);
@@ -786,17 +1279,20 @@ function App() {
       ? `Search: "${search}" - MovieHouse`
       : watchUrl 
         ? `Watching - MovieHouse`
-        : category === "filipino"
-          ? `Tagalog Movies - MovieHouse`
-          : `${categoryLabels[category]} ${type === "movie" ? "Movies" : "TV Shows"} - MovieHouse`;
+        : showTVSeriesPage
+          ? category === "tagalog_tv"
+            ? `Tagalog TV Shows - MovieHouse`
+            : `${currentCategoryLabels[category]} - MovieHouse`
+          : category === "filipino"
+            ? `Tagalog Movies - MovieHouse`
+            : `${currentCategoryLabels[category]} - MovieHouse`;
     
     document.title = title;
-  }, [search, watchUrl, category, type, categoryLabels]);
+  }, [search, watchUrl, category, showTVSeriesPage, currentCategoryLabels]);
 
   // ================= Cleanup on unmount =================
   useEffect(() => {
     return () => {
-      // Clean up ad scripts on unmount
       const adScripts = document.querySelectorAll('script[type="text/javascript"]');
       adScripts.forEach(script => {
         const scriptContent = script.textContent || script.innerHTML;
@@ -827,12 +1323,12 @@ function App() {
               <input
                 ref={searchInputRef}
                 className="bg-gray-900/80 px-4 py-2 rounded-full w-full placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-600 pr-10"
-                placeholder="Search movies or TV shows..."
+                placeholder={showTVSeriesPage ? "Search TV shows..." : "Search movies..."}
                 value={search}
                 onChange={handleSearchChange}
                 onKeyDown={handleKeyDown}
                 type="text"
-                aria-label="Search movies or TV shows"
+                aria-label={showTVSeriesPage ? "Search TV shows" : "Search movies"}
                 aria-describedby="search-description"
               />
               
@@ -857,7 +1353,6 @@ function App() {
                 </div>
               )}
               
-              {/* Search Suggestions */}
               {suggestions.length > 0 && search.trim().length >= 2 && (
                 <div className="absolute top-full left-0 right-0 mt-2 bg-gray-900/95 backdrop-blur-sm rounded-lg overflow-hidden z-50 border border-gray-700">
                   {suggestions.map((item) => (
@@ -890,34 +1385,43 @@ function App() {
               )}
             </div>
             <p id="search-description" className="sr-only">
-              Search for movies or TV shows by title. Start typing to see suggestions.
+              {showTVSeriesPage ? "Search for TV shows by title. Start typing to see suggestions." : "Search for movies by title. Start typing to see suggestions."}
             </p>
           </div>
         </div>
         
         <div className="flex gap-2">
           <button
-            onClick={() => handleTypeChange("movie")}
+            onClick={goToMovies}
             className={`px-4 py-2 rounded-full text-sm transition-colors duration-300 ${
-              type === "movie" ? "bg-red-600" : "bg-gray-800 hover:bg-gray-700"
+              !showTVSeriesPage ? "bg-red-600" : "bg-gray-800 hover:bg-gray-700"
             }`}
-            aria-pressed={type === "movie"}
+            aria-pressed={!showTVSeriesPage}
           >
-            Movies
+            🎬 Movies
           </button>
           <button
-            onClick={() => handleTypeChange("tv")}
+            onClick={goToTVSeries}
             className={`px-4 py-2 rounded-full text-sm transition-colors duration-300 ${
-              type === "tv" ? "bg-red-600" : "bg-gray-800 hover:bg-gray-700"
+              showTVSeriesPage ? "bg-red-600" : "bg-gray-800 hover:bg-gray-700"
             }`}
-            aria-pressed={type === "tv"}
+            aria-pressed={showTVSeriesPage}
           >
-            TV Shows
+            📺 TV Series
           </button>
         </div>
       </nav>
 
       <div className="pt-24 md:pt-28">
+        {/* TV Show Details Modal */}
+        {showTVDetails && selectedTVShow && (
+          <TVShowDetails
+            show={selectedTVShow}
+            onClose={closeTVDetails}
+            onPlayEpisode={playEpisode}
+          />
+        )}
+
         {search.trim() && (
           <div className="px-4 md:px-6 mb-6">
             <div className="flex justify-between items-center">
@@ -947,30 +1451,30 @@ function App() {
           </div>
         )}
 
-        {!watchUrl && !search.trim() && (
+        {!watchUrl && !search.trim() && !showTVDetails && (
           <div className="px-4 md:px-6 mb-6 md:mb-8">
             <div className="flex flex-wrap gap-2 md:gap-3">
-              {Object.keys(categoryLabels).map((cat) => (
+              {Object.keys(currentCategoryLabels).map((cat) => (
                 <button
                   key={cat}
                   onClick={() => handleCategoryChange(cat)}
                   className={`px-4 py-2 rounded-full text-sm transition-colors duration-300 ${
                     category === cat ? (
-                      cat === "filipino" ? "bg-green-600" : 
-                      cat === "action" ? "bg-orange-600" :
-                      cat === "comedy" ? "bg-yellow-600" :
-                      cat === "drama" ? "bg-purple-600" :
-                      cat === "horror" ? "bg-gray-700" :
-                      cat === "romance" ? "bg-pink-600" :
-                      cat === "thriller" ? "bg-indigo-600" :
-                      cat === "scifi" ? "bg-blue-600" :
-                      cat === "animation" ? "bg-teal-600" :
+                      cat === "filipino" || cat === "tagalog_tv" ? "bg-green-600" : 
+                      cat.includes("action") ? "bg-orange-600" :
+                      cat.includes("comedy") ? "bg-yellow-600" :
+                      cat.includes("drama") ? "bg-purple-600" :
+                      cat.includes("horror") ? "bg-gray-700" :
+                      cat.includes("romance") ? "bg-pink-600" :
+                      cat.includes("thriller") ? "bg-indigo-600" :
+                      cat.includes("scifi") ? "bg-blue-600" :
+                      cat.includes("animation") ? "bg-teal-600" :
                       "bg-red-600"
                     ) : "bg-gray-900 hover:bg-gray-800"
                   }`}
                   aria-pressed={category === cat}
                 >
-                  {categoryLabels[cat]}
+                  {currentCategoryLabels[cat]}
                 </button>
               ))}
             </div>
@@ -980,11 +1484,16 @@ function App() {
         {watchUrl ? (
           <div className="px-4 md:px-6">
             <button
-              onClick={() => setWatchUrl(null)}
-              className="mb-4 px-4 py-2 rounded-lg bg-gray-900 hover:bg-gray-800 transition-colors duration-300"
-              aria-label="Back to movie list"
+              onClick={() => {
+                setWatchUrl(null);
+                if (showTVSeriesPage && selectedTVShow) {
+                  setShowTVDetails(true);
+                }
+              }}
+              className="mb-4 px-4 py-2 rounded-lg bg-gray-900 hover:bg-gray-800 transition-colors duration-300 flex items-center gap-2"
+              aria-label="Back"
             >
-              ← Back
+              ← Back {showTVSeriesPage ? "to Episodes" : "to List"}
             </button>
             <div className="aspect-video bg-black rounded-xl overflow-hidden">
               <iframe
@@ -995,10 +1504,28 @@ function App() {
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               />
             </div>
+            
+            {showTVSeriesPage && selectedTVShow && (
+              <div className="mt-6 p-4 bg-gray-900/50 rounded-lg">
+                <h3 className="text-xl font-bold mb-2">Now Playing</h3>
+                <p className="text-gray-300">
+                  {selectedTVShow.name} • Season {watchUrl.split('/').slice(-2)[0]} • Episode {watchUrl.split('/').slice(-1)[0]}
+                </p>
+                <button
+                  onClick={() => {
+                    setWatchUrl(null);
+                    setShowTVDetails(true);
+                  }}
+                  className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors duration-300"
+                >
+                  View All Episodes
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <>
-            {featured && !search.trim() && (
+            {featured && !search.trim() && !showTVDetails && (
               <div 
                 className="relative h-[50vh] md:h-[70vh] bg-cover bg-center mb-8 md:mb-12"
                 style={{ 
@@ -1011,7 +1538,31 @@ function App() {
                       {featured.title || featured.name}
                     </h1>
                     
-                    {/* Enhanced Featured Description with Read More */}
+                    {/* Enhanced info for TV shows */}
+                    {showTVSeriesPage && (
+                      <div className="flex items-center gap-3 mb-3">
+                        {featured.number_of_seasons && (
+                          <span className="bg-gray-900/80 px-3 py-1 rounded-full text-sm">
+                            {featured.number_of_seasons} Season{featured.number_of_seasons > 1 ? 's' : ''}
+                          </span>
+                        )}
+                        {featured.number_of_episodes && (
+                          <span className="text-gray-300 text-sm">
+                            {featured.number_of_episodes} Episodes
+                          </span>
+                        )}
+                        {featured.status && (
+                          <span className={`text-sm px-2 py-1 rounded-full ${
+                            featured.status === 'Returning Series' ? 'bg-green-900/50 text-green-300' :
+                            featured.status === 'Ended' ? 'bg-red-900/50 text-red-300' :
+                            'bg-gray-800 text-gray-300'
+                          }`}>
+                            {featured.status}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    
                     <div className="text-gray-300 mb-4 md:mb-6">
                       <p className="text-sm md:text-base line-clamp-3">
                         {featured.overview || "No description available."}
@@ -1021,10 +1572,10 @@ function App() {
                     <div className="flex flex-wrap gap-3">
                       <button
                         onClick={() => startWatching(featured)}
-                        className="bg-red-600 hover:bg-red-700 px-5 md:px-6 py-2 md:py-3 rounded-lg font-semibold transition-colors duration-300"
+                        className="bg-red-600 hover:bg-red-700 px-5 md:px-6 py-2 md:py-3 rounded-lg font-semibold transition-colors duration-300 flex items-center gap-2"
                         aria-label={`Play ${featured.title || featured.name}`}
                       >
-                        ▶ Play Now
+                        <span>▶</span> {showTVSeriesPage ? "Browse Episodes" : "Play Now"}
                       </button>
                       <div className="flex items-center gap-4 text-sm text-gray-300">
                         <span className="bg-gray-900/80 px-3 py-1 rounded-full">
@@ -1033,12 +1584,10 @@ function App() {
                         <span>
                           {featured.release_date?.substring(0,4) || featured.first_air_date?.substring(0,4)}
                         </span>
-                        {/* Runtime for movies */}
-                        {type === "movie" && (
+                        {!showTVSeriesPage && (
                           <span className="text-gray-400">• {formatRuntime(featured.runtime || "N/A")}</span>
                         )}
-                        {/* Episode info for TV shows */}
-                        {type === "tv" && featured.episode_run_time?.[0] && (
+                        {showTVSeriesPage && featured.episode_run_time?.[0] && (
                           <span className="text-gray-400">• {featured.episode_run_time[0]}m/ep</span>
                         )}
                         {(featured.original_language === 'tl' || 
@@ -1068,12 +1617,18 @@ function App() {
             {loading && !search.trim() && page === 1 ? (
               <div className="px-4 md:px-6">
                 <h2 className="text-xl md:text-2xl font-bold mb-6">
-                  {category === "filipino" ? (
-                    <span>
-                      Loading Tagalog Movies
-                    </span>
+                  {showTVSeriesPage ? (
+                    category === "tagalog_tv" ? (
+                      "Loading Tagalog TV Shows..."
+                    ) : (
+                      `Loading ${currentCategoryLabels[category]}...`
+                    )
                   ) : (
-                    `Loading ${categoryLabels[category]} ${type === "movie" ? "Movies" : "TV Shows"}...`
+                    category === "filipino" ? (
+                      "Loading Tagalog Movies..."
+                    ) : (
+                      `Loading ${currentCategoryLabels[category]}...`
+                    )
                   )}
                 </h2>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 md:gap-6">
@@ -1082,19 +1637,25 @@ function App() {
                   ))}
                 </div>
               </div>
-            ) : !loading && !error && displayMovies.length > 0 && (
+            ) : !loading && !error && displayMovies.length > 0 && !showTVDetails && (
               <div className="px-4 md:px-6">
                 {!search.trim() && (
                   <h2 className="text-xl md:text-2xl font-bold mb-6">
-                    {category === "filipino" ? (
-                      <span>
-                        Tagalog Movies
-                      </span>
+                    {showTVSeriesPage ? (
+                      category === "tagalog_tv" ? (
+                        "Tagalog TV Shows"
+                      ) : (
+                        currentCategoryLabels[category]
+                      )
                     ) : (
-                      `${categoryLabels[category]} ${type === "movie" ? "Movies" : "TV Shows"}`
+                      category === "filipino" ? (
+                        "Tagalog Movies"
+                      ) : (
+                        currentCategoryLabels[category]
+                      )
                     )}
                     <span className="text-gray-400 text-base ml-2">
-                      ({displayMovies.length} movies)
+                      ({displayMovies.length} {showTVSeriesPage ? 'TV shows' : 'movies'})
                     </span>
                   </h2>
                 )}
@@ -1107,7 +1668,7 @@ function App() {
                     >
                       <MovieItem
                         item={item}
-                        type={type}
+                        type={showTVSeriesPage ? "tv" : "movie"}
                         onClick={startWatching}
                       />
                     </div>
@@ -1125,20 +1686,22 @@ function App() {
                       disabled={loading}
                       className="px-6 py-3 bg-gray-800 hover:bg-gray-700 rounded-lg font-medium transition-colors duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {loading ? "Loading..." : "Load More Movies"}
+                      {loading ? "Loading..." : "Load More"}
                     </button>
                   </div>
                 )}
                 
-                {/* Tagalog movies note */}
-                {category === "filipino" && displayMovies.length > 0 && (
+                {/* Tagalog content note */}
+                {(category === "filipino" || category === "tagalog_tv") && displayMovies.length > 0 && (
                   <div className="mt-8 p-4 bg-green-900/30 rounded-lg border border-gray-700">
                     <div className="flex items-center gap-3 mb-2">
-                      <h3 className="text-lg font-bold">About Tagalog Movies</h3>
+                      <span className="text-green-400 text-xl">🇵🇭</span>
+                      <h3 className="text-lg font-bold">About Tagalog Content</h3>
                     </div>
                     <p className="text-gray-300 text-sm">
-                      These are movies originally in Tagalog (Filipino language) or produced in the Philippines. 
-                      Enjoy authentic Filipino cinema with local stories and culture.
+                      {category === "filipino" 
+                        ? "These are movies originally in Tagalog (Filipino language) or produced in the Philippines. Enjoy authentic Filipino cinema with local stories and culture."
+                        : "These are TV shows originally in Tagalog (Filipino language) or produced in the Philippines. Watch Filipino series, dramas, and entertainment shows."}
                     </p>
                   </div>
                 )}
@@ -1160,13 +1723,13 @@ function App() {
           </>
         )}
 
-        {loading && (search.trim() || watchUrl) && (
+        {loading && (search.trim() || showTVDetails) && (
           <div className="flex flex-col items-center justify-center py-20">
             <div className="relative">
               <div className="w-20 h-20 border-4 border-red-600 border-t-transparent rounded-full animate-spin"></div>
             </div>
             <p className="mt-6 text-gray-400">
-              {search.trim() ? "Searching..." : `Loading ${type === "movie" ? "movies" : "TV shows"}...`}
+              {search.trim() ? "Searching..." : `Loading ${showTVSeriesPage ? 'TV shows' : 'movies'}...`}
             </p>
           </div>
         )}
