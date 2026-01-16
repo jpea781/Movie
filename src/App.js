@@ -2,11 +2,9 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from "react"
 
 const API_KEY = process.env.REACT_APP_TMDB_API_KEY;
 
-// ================= IMAGE OPTIMIZATION UTILITIES =================
+// ================= WORKING IMAGE UTILITIES =================
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/";
-const PLACEHOLDER_IMAGE = "https://via.placeholder.com/300x450/111/666?text=No+Poster";
 
-// Image size presets
 const imageSizes = {
   thumbnail: "w92",
   small: "w154",
@@ -17,41 +15,22 @@ const imageSizes = {
   original: "original"
 };
 
-// Get optimized image URL with WebP support
-const getOptimizedImageUrl = (path, options = {}) => {
-  if (!path) return PLACEHOLDER_IMAGE;
-  
-  const {
-    size = imageSizes.card,
-    format = "webp",
-    quality = 80,
-    retina = false
-  } = options;
-  
-  const actualSize = retina && size !== "original" 
-    ? size.replace('w', '') * 2 
-    : size;
-  
-  const sizePrefix = size === "original" ? "original" : `w${actualSize}`;
-  const baseUrl = `${TMDB_IMAGE_BASE}${sizePrefix}${path}`;
-  
-  if (format === "webp" && size !== "original") {
-    return `${baseUrl}?format=webp&quality=${quality}`;
+const getImageUrl = (path, size = "card") => {
+  if (!path || typeof path !== 'string' || path.trim() === '' || path === 'null') {
+    return null;
   }
   
-  return baseUrl;
+  const sizeString = imageSizes[size] || imageSizes.card;
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return `${TMDB_IMAGE_BASE}${sizeString}${cleanPath}`;
 };
 
-// Get backdrop image for hero section
-const getBackdropImage = (path, isHighDPI = false) => {
-  return getOptimizedImageUrl(path, {
-    size: isHighDPI ? imageSizes.xlarge : imageSizes.large,
-    format: "webp",
-    quality: 85
-  });
+const getBackdropImage = (path) => {
+  if (!path) return null;
+  return getImageUrl(path, "large");
 };
 
-// Optimized Image Component - FIXED: Removed unused handleImageError
+// ================= SIMPLE IMAGE COMPONENT =================
 const OptimizedImage = React.memo(({ 
   src, 
   alt, 
@@ -59,18 +38,16 @@ const OptimizedImage = React.memo(({
   className = "",
   lazy = true,
   priority = false,
-  onLoad,
-  onError,
   ...props 
 }) => {
-  const [isLoading, setIsLoading] = useState(true);
-  const [imgError, setImgError] = useState(false);
+  const [hasError, setHasError] = useState(false);
   const [isVisible, setIsVisible] = useState(!lazy || priority);
   const imgRef = useRef();
-  const observerRef = useRef();
+  
+  const imageUrl = getImageUrl(src, size);
   
   useEffect(() => {
-    if (!lazy || priority || isVisible) return;
+    if (!lazy || priority || isVisible || !imageUrl) return;
     
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -79,86 +56,51 @@ const OptimizedImage = React.memo(({
           observer.disconnect();
         }
       },
-      {
-        rootMargin: '200px',
-        threshold: 0.1
-      }
+      { rootMargin: '100px', threshold: 0.1 }
     );
     
     if (imgRef.current) {
       observer.observe(imgRef.current);
     }
     
-    observerRef.current = observer;
-    
-    return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect();
-      }
-    };
-  }, [lazy, priority, isVisible]);
+    return () => observer.disconnect();
+  }, [lazy, priority, isVisible, imageUrl]);
   
-  if (!isVisible) {
+  if (!imageUrl || hasError) {
     return (
       <div 
         ref={imgRef}
-        className={`${className} bg-gray-800 animate-pulse rounded`}
+        className={`${className} bg-gradient-to-br from-gray-800 to-gray-900 rounded-xl aspect-[2/3] flex flex-col items-center justify-center`}
         style={{ aspectRatio: '2/3' }}
-        aria-hidden="true"
+      >
+        <div className="text-gray-500 text-4xl mb-3">🎬</div>
+        <p className="text-gray-400 text-sm">No poster</p>
+      </div>
+    );
+  }
+  
+  if (!isVisible && lazy && !priority) {
+    return (
+      <div 
+        ref={imgRef}
+        className={`${className} bg-gradient-to-br from-gray-800 to-gray-900 rounded-xl aspect-[2/3] animate-pulse`}
+        style={{ aspectRatio: '2/3' }}
       />
     );
   }
   
-  const optimizedSrc = getOptimizedImageUrl(src, { 
-    size,
-    format: "webp"
-  });
-  
-  const fallbackSrc = getOptimizedImageUrl(src, { 
-    size,
-    format: "jpg"
-  });
-  
-  const handleImageLoad = (e) => {
-    setIsLoading(false);
-    onLoad?.(e);
-  };
-  
   return (
-    <div className="relative" ref={imgRef}>
-      {isLoading && (
-        <div className="absolute inset-0 bg-gray-800 animate-pulse rounded" />
-      )}
-      
-      <img
-        src={optimizedSrc}
-        alt={alt}
-        loading={lazy ? "lazy" : "eager"}
-        decoding="async"
-        className={`${className} ${isLoading ? 'opacity-0' : 'opacity-100'} transition-opacity duration-300`}
-        onLoad={handleImageLoad}
-        onError={(e) => {
-          // Fallback to JPG if WebP fails
-          if (e.target.src !== fallbackSrc) {
-            e.target.src = fallbackSrc;
-          } else {
-            setImgError(true);
-            setIsLoading(false);
-            onError?.(e);
-          }
-        }}
-        {...props}
-      />
-      
-      {imgError && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-900 rounded">
-          <div className="text-center p-4">
-            <div className="text-gray-500 text-2xl mb-2" aria-hidden="true">🖼️</div>
-            <p className="text-gray-400 text-sm">Image failed to load</p>
-          </div>
-        </div>
-      )}
-    </div>
+    <img
+      ref={imgRef}
+      src={imageUrl}
+      alt={alt || "Movie poster"}
+      loading={lazy && !priority ? "lazy" : "eager"}
+      decoding="async"
+      className={`${className} rounded-xl w-full h-full object-cover`}
+      style={{ aspectRatio: '2/3' }}
+      onError={() => setHasError(true)}
+      {...props}
+    />
   );
 });
 
@@ -204,7 +146,6 @@ class SimpleErrorBoundary extends React.Component {
         </div>
       );
     }
-
     return this.props.children;
   }
 }
@@ -213,49 +154,36 @@ class SimpleErrorBoundary extends React.Component {
 const MovieItem = React.memo(({ item, type, onClick }) => {
   const [showFullDescription, setShowFullDescription] = useState(false);
 
-  const handleClick = () => {
-    onClick(item);
-  };
-
+  const handleClick = () => onClick(item);
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       onClick(item);
     }
   };
-
   const toggleDescription = (e) => {
     e.stopPropagation();
     setShowFullDescription(!showFullDescription);
   };
 
   const isTagalog = item.original_language === 'tl' || 
-                     (item.origin_country && item.origin_country.includes('PH')) ||
-                     (item.production_countries && item.production_countries.some(country => country.iso_3166_1 === 'PH'));
+                   (item.origin_country && item.origin_country.includes('PH')) ||
+                   (item.production_countries && item.production_countries.some(country => country.iso_3166_1 === 'PH'));
 
   const truncatedDescription = item.overview 
     ? (showFullDescription ? item.overview : item.overview.substring(0, 80) + '...')
     : 'No description available';
 
-  // TV Show specific info
   const renderTVShowInfo = () => {
     if (type !== "tv") return null;
     
     return (
       <div className="mt-1 space-y-1">
         <div className="flex items-center gap-2 text-xs text-gray-400">
-          {item.first_air_date && (
-            <span>📅 {item.first_air_date.substring(0, 4)}</span>
-          )}
-          {item.number_of_seasons && (
-            <span>• {item.number_of_seasons} Season{item.number_of_seasons > 1 ? 's' : ''}</span>
-          )}
-          {item.number_of_episodes && (
-            <span>• {item.number_of_episodes} Episodes</span>
-          )}
-          {item.episode_run_time?.[0] && (
-            <span>• {item.episode_run_time[0]}m</span>
-          )}
+          {item.first_air_date && <span>📅 {item.first_air_date.substring(0, 4)}</span>}
+          {item.number_of_seasons && <span>• {item.number_of_seasons} Season{item.number_of_seasons > 1 ? 's' : ''}</span>}
+          {item.number_of_episodes && <span>• {item.number_of_episodes} Episodes</span>}
+          {item.episode_run_time?.[0] && <span>• {item.episode_run_time[0]}m</span>}
         </div>
         
         {item.status && (
@@ -281,7 +209,6 @@ const MovieItem = React.memo(({ item, type, onClick }) => {
       aria-label={`Watch ${item.title || item.name}${isTagalog ? ' (Tagalog)' : ''}`}
     >
       <div className="relative overflow-hidden rounded-xl aspect-[2/3] mb-2">
-        {/* OPTIMIZED IMAGE */}
         <OptimizedImage
           src={item.poster_path}
           alt={`Poster for ${item.title || item.name}`}
@@ -317,9 +244,7 @@ const MovieItem = React.memo(({ item, type, onClick }) => {
         {type === "movie" && (
           <p className="text-gray-400 text-xs md:text-sm">
             {item.release_date?.substring(0,4) || "Unknown"}
-            {item.runtime && (
-              <span className="ml-2">• {formatRuntime(item.runtime)}</span>
-            )}
+            {item.runtime && <span className="ml-2">• {formatRuntime(item.runtime)}</span>}
           </p>
         )}
         
@@ -350,392 +275,6 @@ const MovieItem = React.memo(({ item, type, onClick }) => {
 
 MovieItem.displayName = 'MovieItem';
 
-// ================= TV Show Details Component =================
-const TVShowDetails = ({ show, onClose, onPlayEpisode }) => {
-  const [seasons, setSeasons] = useState([]);
-  const [selectedSeason, setSelectedSeason] = useState(1);
-  const [episodes, setEpisodes] = useState([]);
-  const [loadingEpisodes, setLoadingEpisodes] = useState(false);
-  const [showCredits, setShowCredits] = useState(false);
-
-  // Memoize fetchEpisodes
-  const fetchEpisodes = useCallback(async (seasonNumber) => {
-    setLoadingEpisodes(true);
-    try {
-      const response = await fetch(
-        `https://api.themoviedb.org/3/tv/${show.id}/season/${seasonNumber}?api_key=${API_KEY}`
-      );
-      const data = await response.json();
-      setEpisodes(data.episodes || []);
-      setSelectedSeason(seasonNumber);
-    } catch (error) {
-      console.error('Error fetching episodes:', error);
-    } finally {
-      setLoadingEpisodes(false);
-    }
-  }, [show]);
-
-  // Fetch seasons
-  useEffect(() => {
-    if (!show?.id) return;
-
-    const fetchSeasons = async () => {
-      try {
-        const response = await fetch(
-          `https://api.themoviedb.org/3/tv/${show.id}?api_key=${API_KEY}&append_to_response=credits,content_ratings`
-        );
-        const data = await response.json();
-        setSeasons(data.seasons || []);
-        
-        if (data.seasons?.[0]) {
-          fetchEpisodes(data.seasons[0].season_number);
-        }
-      } catch (error) {
-        console.error('Error fetching seasons:', error);
-      }
-    };
-
-    fetchSeasons();
-  }, [show, fetchEpisodes]);
-
-  // Keyboard navigation
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-        if (!seasons.length) return;
-        
-        const currentIndex = seasons.findIndex(s => s.season_number === selectedSeason);
-        let nextIndex;
-        
-        if (e.key === 'ArrowRight') {
-          nextIndex = currentIndex < seasons.length - 1 ? currentIndex + 1 : 0;
-        } else {
-          nextIndex = currentIndex > 0 ? currentIndex - 1 : seasons.length - 1;
-        }
-        
-        if (seasons[nextIndex]) {
-          fetchEpisodes(seasons[nextIndex].season_number);
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [seasons, selectedSeason, onClose, fetchEpisodes]);
-
-  const formatRuntime = (minutes) => {
-    if (!minutes) return "N/A";
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
-  };
-
-  const playFirstEpisode = () => {
-    if (episodes.length > 0) {
-      onPlayEpisode(show, selectedSeason, 1);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/95 z-50 overflow-y-auto">
-      <div 
-        className="absolute inset-0 bg-cover bg-center opacity-20"
-        style={{ 
-          backgroundImage: `url(${getBackdropImage(show.backdrop_path)})` 
-        }}
-      />
-      
-      <button
-        onClick={onClose}
-        className="absolute top-4 right-4 z-10 text-white text-2xl bg-black/50 rounded-full w-10 h-10 flex items-center justify-center hover:bg-black/80 transition-colors"
-        aria-label="Close"
-      >
-        ✕
-      </button>
-      
-      <div className="relative z-10 max-w-7xl mx-auto px-4 py-8">
-        {/* Show Header */}
-        <div className="flex flex-col lg:flex-row gap-8 mb-8">
-          <div className="lg:w-1/4">
-            {/* OPTIMIZED IMAGE */}
-            <OptimizedImage
-              src={show.poster_path}
-              alt={show.name}
-              size="medium"
-              className="rounded-xl shadow-2xl w-full"
-              lazy={true}
-            />
-          </div>
-          
-          <div className="lg:w-3/4">
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h1 className="text-4xl md:text-5xl font-bold mb-2">{show.name}</h1>
-                <div className="flex items-center gap-3 text-gray-300 mb-4">
-                  <span className="bg-gray-800 px-3 py-1 rounded-full">
-                    ⭐ {show.vote_average?.toFixed(1)} ({show.vote_count} votes)
-                  </span>
-                  <span>{show.first_air_date?.substring(0, 4)}</span>
-                  <span>• {show.number_of_seasons} Season{show.number_of_seasons > 1 ? 's' : ''}</span>
-                  <span>• {show.number_of_episodes} Episodes</span>
-                  {show.episode_run_time?.[0] && (
-                    <span>• {formatRuntime(show.episode_run_time[0])}</span>
-                  )}
-                </div>
-              </div>
-            </div>
-            
-            {/* Genres */}
-            {show.genres?.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-4">
-                {show.genres.map(genre => (
-                  <span
-                    key={genre.id}
-                    className="px-3 py-1 bg-gray-800 rounded-full text-sm"
-                  >
-                    {genre.name}
-                  </span>
-                ))}
-              </div>
-            )}
-            
-            {/* Overview */}
-            <div className="mb-6">
-              <h3 className="text-xl font-bold mb-2">Overview</h3>
-              <p className="text-gray-300 leading-relaxed">{show.overview}</p>
-            </div>
-            
-            {/* Show Info Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <div>
-                <h4 className="text-gray-400 text-sm">Status</h4>
-                <p className="font-semibold">{show.status}</p>
-              </div>
-              <div>
-                <h4 className="text-gray-400 text-sm">Type</h4>
-                <p className="font-semibold">{show.type}</p>
-              </div>
-              <div>
-                <h4 className="text-gray-400 text-sm">Language</h4>
-                <p className="font-semibold">
-                  {show.original_language === 'en' ? 'English' : 
-                   show.original_language === 'tl' ? 'Tagalog' : 
-                   show.original_language?.toUpperCase()}
-                </p>
-              </div>
-              <div>
-                <h4 className="text-gray-400 text-sm">Last Air Date</h4>
-                <p className="font-semibold">{show.last_air_date || 'N/A'}</p>
-              </div>
-            </div>
-            
-            {/* Networks */}
-            {show.networks?.length > 0 && (
-              <div className="mb-6">
-                <h4 className="text-gray-400 text-sm mb-2">Networks</h4>
-                <div className="flex gap-3">
-                  {show.networks.map(network => (
-                    <div key={network.id} className="flex items-center gap-2 bg-gray-900/50 px-3 py-2 rounded-lg">
-                      {network.logo_path && (
-                        <OptimizedImage
-                          src={network.logo_path}
-                          alt={network.name}
-                          size="small"
-                          className="h-6"
-                          lazy={true}
-                        />
-                      )}
-                      <span className="text-sm">{network.name}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            
-            {/* Action Buttons */}
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={playFirstEpisode}
-                className="bg-red-600 hover:bg-red-700 px-6 py-3 rounded-lg font-semibold transition-colors duration-300 flex items-center gap-2"
-              >
-                <span>▶</span> Play First Episode
-              </button>
-              
-              <button
-                onClick={() => setShowCredits(!showCredits)}
-                className="bg-gray-800 hover:bg-gray-700 px-6 py-3 rounded-lg font-semibold transition-colors duration-300"
-              >
-                {showCredits ? 'Hide Cast' : 'Show Cast'}
-              </button>
-            </div>
-          </div>
-        </div>
-        
-        {/* Cast (Collapsible) */}
-        {showCredits && show.credits?.cast?.length > 0 && (
-          <div className="mb-8">
-            <h2 className="text-2xl font-bold mb-4">Cast</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              {show.credits.cast.slice(0, 10).map(person => (
-                <div key={person.id} className="bg-gray-900/50 rounded-lg p-3">
-                  <OptimizedImage
-                    src={person.profile_path}
-                    alt={person.name}
-                    size="medium"
-                    className="w-full h-48 object-cover rounded-lg mb-3"
-                    lazy={true}
-                  />
-                  <h4 className="font-semibold truncate">{person.name}</h4>
-                  <p className="text-gray-400 text-sm truncate">{person.character}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        
-        {/* Seasons Selector */}
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold mb-4">Seasons</h2>
-          <div className="flex flex-wrap gap-2">
-            {seasons
-              .filter(season => season.season_number > 0)
-              .map(season => (
-                <button
-                  key={season.id}
-                  onClick={() => fetchEpisodes(season.season_number)}
-                  className={`px-4 py-2 rounded-lg transition-colors duration-300 ${
-                    selectedSeason === season.season_number
-                      ? 'bg-red-600'
-                      : 'bg-gray-800 hover:bg-gray-700'
-                  }`}
-                >
-                  Season {season.season_number}
-                  {season.air_date && (
-                    <span className="text-gray-300 text-sm ml-2">
-                      ({season.air_date.substring(0, 4)})
-                    </span>
-                  )}
-                </button>
-              ))}
-          </div>
-        </div>
-        
-        {/* Episodes List */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-2xl font-bold">
-              Season {selectedSeason} Episodes
-              <span className="text-gray-400 text-lg ml-2">
-                ({episodes.length} episodes)
-              </span>
-            </h2>
-            <button
-              onClick={playFirstEpisode}
-              className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-medium transition-colors duration-300 flex items-center gap-2"
-            >
-              <span>▶</span> Play All
-            </button>
-          </div>
-          
-          {loadingEpisodes ? (
-            <div className="text-center py-8">
-              <div className="inline-block w-8 h-8 border-2 border-red-600 border-t-transparent rounded-full animate-spin"></div>
-              <p className="mt-2 text-gray-400">Loading episodes...</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {episodes.map(episode => (
-                <div
-                  key={episode.id}
-                  className="bg-gray-900/50 rounded-lg p-4 hover:bg-gray-800/50 transition-colors duration-300 cursor-pointer border-l-3 border-transparent hover:border-red-600"
-                  onClick={() => onPlayEpisode(show, selectedSeason, episode.episode_number)}
-                >
-                  <div className="flex gap-4">
-                    <div className="flex-shrink-0 w-12 h-12 bg-gray-800 rounded-lg flex items-center justify-center relative">
-                      <span className="font-bold">E{episode.episode_number}</span>
-                      <span className="absolute text-gray-400 text-xs -top-2 left-2">E</span>
-                    </div>
-                    
-                    <div className="flex-1">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h3 className="font-semibold text-lg mb-1">{episode.name}</h3>
-                          <div className="flex items-center gap-3 text-gray-400 text-sm mb-2">
-                            <span>⭐ {episode.vote_average?.toFixed(1) || 'N/A'}</span>
-                            {episode.runtime && (
-                              <span>• {formatRuntime(episode.runtime)}</span>
-                            )}
-                            {episode.air_date && (
-                              <span>• {episode.air_date}</span>
-                            )}
-                          </div>
-                        </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onPlayEpisode(show, selectedSeason, episode.episode_number);
-                          }}
-                          className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors duration-300 flex items-center gap-2"
-                        >
-                          <span>▶</span> Play
-                        </button>
-                      </div>
-                      
-                      {episode.overview && (
-                        <p className="text-gray-300 text-sm line-clamp-2 mb-2">{episode.overview}</p>
-                      )}
-                      
-                      {episode.guest_stars?.slice(0, 3).length > 0 && (
-                        <div className="mt-2">
-                          <span className="text-gray-400 text-xs">With: </span>
-                          <span className="text-gray-300 text-xs">
-                            {episode.guest_stars.slice(0, 3).map(star => star.name).join(', ')}
-                            {episode.guest_stars.length > 3 && '...'}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        
-        {/* Additional Info */}
-        <div className="bg-gray-900/30 rounded-lg p-6 mb-8">
-          <h3 className="text-xl font-bold mb-4">Series Information</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <h4 className="text-gray-400 text-sm mb-1">Created By</h4>
-              <p className="font-medium">
-                {show.created_by?.map(creator => creator.name).join(', ') || 'N/A'}
-              </p>
-            </div>
-            <div>
-              <h4 className="text-gray-400 text-sm mb-1">Original Network</h4>
-              <p className="font-medium">
-                {show.networks?.[0]?.name || 'N/A'}
-              </p>
-            </div>
-            <div>
-              <h4 className="text-gray-400 text-sm mb-1">First Aired</h4>
-              <p className="font-medium">{show.first_air_date || 'N/A'}</p>
-            </div>
-            <div>
-              <h4 className="text-gray-400 text-sm mb-1">Last Aired</h4>
-              <p className="font-medium">{show.last_air_date || 'N/A'}</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 // ================= Main App Component =================
 function App() {
   const [movies, setMovies] = useState([]);
@@ -749,188 +288,19 @@ function App() {
   const [isSearching, setIsSearching] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
   
-  // TV Show states
   const [selectedTVShow, setSelectedTVShow] = useState(null);
   const [showTVDetails, setShowTVDetails] = useState(false);
   const [showTVSeriesPage, setShowTVSeriesPage] = useState(false);
   
-  // Load More functionality states
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   
-  // Using useRef instead of state for timeout
   const typingTimeoutRef = useRef(null);
   const searchInputRef = useRef(null);
   const lastMovieRef = useRef();
   const observerRef = useRef();
 
-  // Track ad frequency and timing
-  const [adsLoaded, setAdsLoaded] = useState(false);
-  const lastAdTimeRef = useRef(0);
-  const adCooldown = 60000; // 60 seconds between ads
-
-  // Error messages mapping
-  const errorMessages = useMemo(() => ({
-    'Failed to fetch': 'Network error. Please check your connection.',
-    'Search failed': 'Search service unavailable. Try again later.',
-    'Failed to load content': 'Content loading failed. Refresh the page.',
-    'default': 'An unexpected error occurred.'
-  }), []);
-
-  // ================= ULTRA-ROBUST AD LOADING FUNCTION =================
-  const loadPopAds = useCallback(() => {
-    const now = Date.now();
-    
-    if (now - lastAdTimeRef.current < adCooldown) {
-      console.log('⏳ Ad cooldown active, skipping');
-      return;
-    }
-    
-    if (adsLoaded) {
-      console.log('✅ Ads already loaded');
-      return;
-    }
-
-    console.log('🚀 ATTEMPTING TO LOAD POPADS...');
-    
-    const injectPopAdsScript = () => {
-      return new Promise((resolve) => {
-        try {
-          document.querySelectorAll('script').forEach(script => {
-            if (script.textContent && script.textContent.includes('a8876ec4588517dc1fe664b0e6812854')) {
-              script.remove();
-            }
-          });
-
-          const script = document.createElement('script');
-          script.type = 'text/javascript';
-          script.setAttribute('data-cfasync', 'false');
-          script.textContent = `/*<![CDATA[/* */(function(){var x=window,v="a8876ec4588517dc1fe664b0e6812854",d=[["siteId",847*577+608*61*11+4371892],["minBid",0],["popundersPerIP","0"],["delayBetween",0],["default",false],["defaultPerDay",0],["topmostLayer","auto"]],u=["d3d3LmRpc3BsYXl2ZXJ0aXNpbmcuY29tL3lpbnN0YWZldGNoLm1pbi5jc3M=","ZDNtem9rdHk5NTFjNXcuY2xvdWRmcm9udC5uZXQvY2pYYnQvZ2pzb25saW50Lm1pbi5qcw=="],e=-1,m,c,n=function(){clearTimeout(c);e++;if(u[e]&&!(1794245271000<(new Date).getTime()&&1<e)){m=x.document.createElement("script");m.type="text/javascript";m.async=!0;var i=x.document.getElementsByTagName("script")[0];m.src="https://"+atob(u[e]);m.crossOrigin="anonymous";m.onerror=n;m.onload=function(){clearTimeout(c);x[v.slice(0,16)+v.slice(0,16)]||n()};c=setTimeout(n,5E3);i.parentNode.insertBefore(m,i)}};if(!x[v]){try{Object.freeze(x[v]=d)}catch(e){}n()}})();/*]]>/* */`;
-          
-          script.onload = () => {
-            console.log('✅ PopAds script loaded');
-            setTimeout(() => {
-              if (window.a8876ec4588517dc1fe664b0e6812854) {
-                console.log('🎉 PopAds initialized successfully!');
-                setAdsLoaded(true);
-                lastAdTimeRef.current = Date.now();
-                resolve(true);
-              } else {
-                console.log('⚠️ Script loaded but PopAds not initialized');
-                resolve(false);
-              }
-            }, 2000);
-          };
-          
-          script.onerror = () => {
-            console.warn('❌ Script failed to load');
-            resolve(false);
-          };
-          
-          document.body.appendChild(script);
-          
-        } catch (error) {
-          console.log('Error in injectPopAdsScript:', error);
-          resolve(false);
-        }
-      });
-    };
-
-    const injectViaIframe = () => {
-      return new Promise((resolve) => {
-        try {
-          const iframe = document.createElement('iframe');
-          iframe.style.display = 'none';
-          iframe.srcdoc = `
-            <!DOCTYPE html>
-            <html>
-              <head>
-                <script type="text/javascript">
-                  try {
-                    /*<![CDATA[/* */(function(){var x=window,v="a8876ec4588517dc1fe664b0e6812854",d=[["siteId",847*577+608*61*11+4371892],["minBid",0],["popundersPerIP","0"],["delayBetween",0],["default",false],["defaultPerDay",0],["topmostLayer","auto"]],u=["d3d3LmRpc3BsYXl2ZXJ0aXNpbmcuY29tL3lpbnN0YWZldGNoLm1pbi5jc3M=","ZDNtem9rdHk5NTFjNXcuY2xvdWRmcm9udC5uZXQvY2pYYnQvZ2pzb25saW50Lm1pbi5qcw=="],e=-1,m,c,n=function(){clearTimeout(c);e++;if(u[e]&&!(1794245271000<(new Date).getTime()&&1<e)){m=x.document.createElement("script");m.type="text/javascript";m.async=!0;var i=x.document.getElementsByTagName("script")[0];m.src="https://"+atob(u[e]);m.crossOrigin="anonymous";m.onerror=n;m.onload=function(){clearTimeout(c);x[v.slice(0,16)+v.slice(0,16)]||n()};c=setTimeout(n,5E3);i.parentNode.insertBefore(m,i)}};if(!x[v]){try{Object.freeze(x[v]=d)}catch(e){}n()}})();/*]]>/* */
-                    parent.postMessage('popads-loaded', '*');
-                  } catch(e) {
-                    parent.postMessage('popads-error', '*');
-                  }
-                </script>
-              </head>
-              <body></body>
-            </html>
-          `;
-          
-          const messageHandler = (event) => {
-            if (event.data === 'popads-loaded') {
-              console.log('✅ PopAds loaded via iframe');
-              window.removeEventListener('message', messageHandler);
-              iframe.remove();
-              setAdsLoaded(true);
-              lastAdTimeRef.current = Date.now();
-              resolve(true);
-            } else if (event.data === 'popads-error') {
-              console.log('❌ PopAds failed via iframe');
-              window.removeEventListener('message', messageHandler);
-              iframe.remove();
-              resolve(false);
-            }
-          };
-          
-          window.addEventListener('message', messageHandler);
-          document.body.appendChild(iframe);
-          
-          setTimeout(() => {
-            window.removeEventListener('message', messageHandler);
-            if (document.body.contains(iframe)) {
-              iframe.remove();
-            }
-            console.log('⏱️ Iframe method timeout');
-            resolve(false);
-          }, 5000);
-          
-        } catch (error) {
-          console.log('Error in injectViaIframe:', error);
-          resolve(false);
-        }
-      });
-    };
-
-    const tryAllMethods = async () => {
-      console.log('Trying Method 1: Direct injection...');
-      const method1Success = await injectPopAdsScript();
-      
-      if (!method1Success) {
-        console.log('Method 1 failed, trying Method 2: Iframe...');
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        const method2Success = await injectViaIframe();
-        
-        if (!method2Success) {
-          console.log('❌ All ad loading methods failed');
-        }
-      }
-    };
-
-    tryAllMethods();
-  }, [adsLoaded]);
-
-  // ================= Load initial ads after delay =================
-  useEffect(() => {
-    const initialTimer = setTimeout(() => {
-      loadPopAds();
-    }, 5000);
-    
-    return () => {
-      clearTimeout(initialTimer);
-    };
-  }, [loadPopAds]);
-
-  // ================= Check API Key =================
-  useEffect(() => {
-    if (!API_KEY || API_KEY === 'undefined') {
-      setError("API key is missing. Please check your .env file");
-      console.error("TMDB API key is missing!");
-    }
-  }, []);
-
-  // ================= UPDATED: Categories for Movies and TV Series =================
+  // ================= Categories =================
   const movieCategoryLabels = useMemo(() => ({
     trending: "🔥 Trending",
     popular: "⭐ Popular", 
@@ -964,18 +334,16 @@ function App() {
     tv_documentary: "📚 Documentary"
   }), []);
 
-  // Current category labels based on page
   const currentCategoryLabels = showTVSeriesPage ? tvCategoryLabels : movieCategoryLabels;
 
-  // ================= UPDATED: API Functions with Load More =================
+  // ================= API Functions =================
   const fetchTrending = useCallback(async (pageNum = 1) => {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch(
-        `https://api.themoviedb.org/3/trending/${showTVSeriesPage ? 'tv' : 'movie'}/week?api_key=${API_KEY}&page=${pageNum}&append_to_response=credits`
-      );
+      const url = `https://api.themoviedb.org/3/trending/${showTVSeriesPage ? 'tv' : 'movie'}/week?api_key=${API_KEY}&page=${pageNum}`;
       
+      const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch");
       
       const data = await res.json();
@@ -991,11 +359,12 @@ function App() {
       setPage(pageNum);
       
     } catch (err) {
-      setError(errorMessages[err.message] || errorMessages.default);
+      console.error('Fetch error:', err);
+      setError('Failed to load content');
     } finally {
       setLoading(false);
     }
-  }, [showTVSeriesPage, errorMessages]);
+  }, [showTVSeriesPage]);
 
   const fetchByCategory = useCallback(async (cat, pageNum = 1) => {
     try {
@@ -1004,16 +373,15 @@ function App() {
       let endpoint = "";
       
       if (showTVSeriesPage) {
-        // TV SERIES PAGE CATEGORIES
         const tvCatMap = {
           'popular_tv': 'popular',
           'top_rated_tv': 'top_rated',
           'on_the_air': 'on_the_air',
           'airing_today': 'airing_today',
-          'tv_action': 10759, // Action & Adventure
+          'tv_action': 10759,
           'tv_comedy': 35,
           'tv_drama': 18,
-          'tv_scifi': 10765, // Sci-Fi & Fantasy
+          'tv_scifi': 10765,
           'tv_animation': 16,
           'tagalog_tv': 'tagalog_tv',
           'tv_mystery': 9648,
@@ -1024,19 +392,15 @@ function App() {
         const tvCat = tvCatMap[cat];
         
         if (typeof tvCat === 'number') {
-          // Genre-based TV shows
-          endpoint = `https://api.themoviedb.org/3/discover/tv?api_key=${API_KEY}&with_genres=${tvCat}&sort_by=popularity.desc&page=${pageNum}&include_adult=false&append_to_response=credits`;
+          endpoint = `https://api.themoviedb.org/3/discover/tv?api_key=${API_KEY}&with_genres=${tvCat}&sort_by=popularity.desc&page=${pageNum}`;
         } else if (tvCat === 'tagalog_tv') {
-          // Tagalog TV shows
-          endpoint = `https://api.themoviedb.org/3/discover/tv?api_key=${API_KEY}&with_original_language=tl&sort_by=popularity.desc&page=${pageNum}&include_adult=false&append_to_response=credits`;
+          endpoint = `https://api.themoviedb.org/3/discover/tv?api_key=${API_KEY}&with_original_language=tl&sort_by=popularity.desc&page=${pageNum}`;
         } else {
-          // Standard TV categories
-          endpoint = `https://api.themoviedb.org/3/tv/${tvCat}?api_key=${API_KEY}&page=${pageNum}&append_to_response=credits`;
+          endpoint = `https://api.themoviedb.org/3/tv/${tvCat}?api_key=${API_KEY}&page=${pageNum}`;
         }
       } else {
-        // MOVIE PAGE CATEGORIES
         if (cat === "filipino") {
-          endpoint = `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&with_original_language=tl&region=PH&sort_by=popularity.desc&page=${pageNum}&include_adult=false&append_to_response=credits`;
+          endpoint = `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&with_original_language=tl&region=PH&sort_by=popularity.desc&page=${pageNum}`;
         }
         else if (["action", "comedy", "drama", "horror", "romance", "thriller", "scifi", "animation"].includes(cat)) {
           const genreMap = {
@@ -1050,15 +414,14 @@ function App() {
             animation: 16
           };
           const genreId = genreMap[cat];
-          endpoint = `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&with_genres=${genreId}&sort_by=popularity.desc&page=${pageNum}&include_adult=false&append_to_response=credits`;
+          endpoint = `https://api.themoviedb.org/3/discover/movie?api_key=${API_KEY}&with_genres=${genreId}&sort_by=popularity.desc&page=${pageNum}`;
         }
         else {
-          endpoint = `https://api.themoviedb.org/3/movie/${cat}?api_key=${API_KEY}&page=${pageNum}&append_to_response=credits`;
+          endpoint = `https://api.themoviedb.org/3/movie/${cat}?api_key=${API_KEY}&page=${pageNum}`;
         }
       }
 
       const res = await fetch(endpoint);
-      
       if (!res.ok) throw new Error("Failed to fetch");
       
       const data = await res.json();
@@ -1074,14 +437,14 @@ function App() {
       setPage(pageNum);
       
     } catch (err) {
-      setError(errorMessages[err.message] || errorMessages.default);
       console.error("Fetch error:", err);
+      setError('Failed to load content');
     } finally {
       setLoading(false);
     }
-  }, [showTVSeriesPage, errorMessages]);
+  }, [showTVSeriesPage]);
 
-  // ================= FIXED: Load More Function with useCallback =================
+  // ================= Load More Function =================
   const handleLoadMore = useCallback(() => {
     if (category === "trending") {
       fetchTrending(page + 1);
@@ -1090,7 +453,7 @@ function App() {
     }
   }, [category, page, fetchTrending, fetchByCategory]);
 
-  // ================= Intersection Observer for Auto Load =================
+  // ================= Intersection Observer =================
   useEffect(() => {
     if (loading || !hasMore || search.trim()) return;
 
@@ -1121,7 +484,7 @@ function App() {
     try {
       const currentType = showTVSeriesPage ? 'tv' : 'movie';
       const res = await fetch(
-        `https://api.themoviedb.org/3/search/${currentType}?api_key=${API_KEY}&query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=1&append_to_response=credits`
+        `https://api.themoviedb.org/3/search/${currentType}?api_key=${API_KEY}&query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=1`
       );
       
       const data = await res.json();
@@ -1149,10 +512,9 @@ function App() {
       setError(null);
       
       const currentType = showTVSeriesPage ? 'tv' : 'movie';
-      const endpoint = `https://api.themoviedb.org/3/search/${currentType}?api_key=${API_KEY}&query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=1&append_to_response=credits`;
+      const endpoint = `https://api.themoviedb.org/3/search/${currentType}?api_key=${API_KEY}&query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=1`;
       
       const res = await fetch(endpoint);
-      
       if (!res.ok) throw new Error("Search failed");
       
       const data = await res.json();
@@ -1164,23 +526,21 @@ function App() {
       setHasMore(false);
       
     } catch (err) {
-      setError(errorMessages[err.message] || errorMessages.default);
+      setError('Search failed');
       setSearchResults([]);
       setSuggestions([]);
     } finally {
       setIsSearching(false);
       setLoading(false);
     }
-  }, [showTVSeriesPage, category, fetchTrending, fetchByCategory, errorMessages]);
+  }, [showTVSeriesPage, category, fetchTrending, fetchByCategory]);
 
-  // ================= Enhanced Search Handler =================
+  // ================= Search Handler =================
   const handleSearchChange = (e) => {
     const value = e.target.value;
     setSearch(value);
     
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     
     if (!value.trim()) {
       setSearchResults([]);
@@ -1201,31 +561,24 @@ function App() {
       
       typingTimeoutRef.current = setTimeout(() => {
         performSearch(value);
-        
-        setTimeout(() => {
-          loadPopAds();
-        }, 1000);
       }, 500);
     }
   };
 
-  // ================= Keyboard Navigation =================
   const handleKeyDown = (e) => {
     switch (e.key) {
       case 'Escape':
         handleClearSearch();
         break;
       case 'Enter':
-        if (search.trim()) {
-          performSearch(search);
-        }
+        if (search.trim()) performSearch(search);
         break;
       default:
         break;
     }
   };
 
-  // ================= Load Data on Mount & Category Change =================
+  // ================= Load Data =================
   useEffect(() => {
     if (!search) {
       setPage(1);
@@ -1234,37 +587,9 @@ function App() {
     }
     
     return () => {
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     };
   }, [category, showTVSeriesPage, search, fetchTrending, fetchByCategory]);
-
-  // ================= Local Storage for Preferences =================
-  useEffect(() => {
-    const preferences = {
-      showTVSeriesPage,
-      category,
-      lastSearch: search
-    };
-    localStorage.setItem('moviehouse_prefs', JSON.stringify(preferences));
-  }, [showTVSeriesPage, category, search]);
-
-  useEffect(() => {
-    const saved = localStorage.getItem('moviehouse_prefs');
-    if (saved) {
-      try {
-        const prefs = JSON.parse(saved);
-        setShowTVSeriesPage(prefs.showTVSeriesPage || false);
-        setCategory(prefs.category || 'trending');
-        if (prefs.lastSearch && prefs.lastSearch.trim()) {
-          setSearch(prefs.lastSearch);
-        }
-      } catch (e) {
-        console.error('Failed to load preferences:', e);
-      }
-    }
-  }, []);
 
   const handleClearSearch = () => {
     setSearch("");
@@ -1273,13 +598,9 @@ function App() {
     setIsSearching(false);
     setPage(1);
     setHasMore(true);
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     category === "trending" ? fetchTrending() : fetchByCategory(category);
-    if (searchInputRef.current) {
-      searchInputRef.current.focus();
-    }
+    if (searchInputRef.current) searchInputRef.current.focus();
   };
 
   const handleSuggestionClick = (item) => {
@@ -1287,125 +608,22 @@ function App() {
     performSearch(item.title || item.name);
   };
 
-  // ================= Enhanced Watch Function =================
+  // ================= Watch Function =================
   const startWatching = (item) => {
     if (!item?.id) return;
     
-    // If on TV Series page, show details modal
     if (showTVSeriesPage) {
       setSelectedTVShow(item);
       setShowTVDetails(true);
       return;
     }
     
-    // For movies, load ads and play
-    loadPopAds();
-    
-    setTimeout(() => {
-      const url = `https://vidsrc.to/embed/movie/${item.id}`;
-      setWatchUrl(url);
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }, 500);
-  };
-
-  // ================= Play TV Episode =================
-  const playEpisode = (show, seasonNumber, episodeNumber) => {
-    loadPopAds();
-    
-    setTimeout(() => {
-      const url = `https://vidsrc.to/embed/tv/${show.id}/${seasonNumber}/${episodeNumber}`;
-      setWatchUrl(url);
-      setShowTVDetails(false);
-      setSelectedTVShow(null);
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }, 500);
-  };
-
-  // ================= Close TV Details =================
-  const closeTVDetails = () => {
-    setShowTVDetails(false);
-    setSelectedTVShow(null);
-  };
-
-  // ================= UPDATED: Reset to Home with Scroll to Top =================
-  const resetToHome = () => {
-    setSearch("");
-    setSearchResults([]);
-    setSuggestions([]);
-    setIsSearching(false);
-    setPage(1);
-    setHasMore(true);
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
-    setCategory("trending");
-    setWatchUrl(null);
-    setShowTVDetails(false);
-    setSelectedTVShow(null);
-    setShowTVSeriesPage(false);
-    
+    const url = `https://vidsrc.to/embed/movie/${item.id}`;
+    setWatchUrl(url);
     window.scrollTo({ top: 0, behavior: "smooth" });
-    
-    fetchTrending();
-  };
-
-  // ================= Switch to TV Series Page =================
-  const goToTVSeries = () => {
-    setShowTVSeriesPage(true);
-    setCategory("popular_tv");
-    setPage(1);
-    setHasMore(true);
-    setSearch("");
-    setSearchResults([]);
-    setSuggestions([]);
-    setWatchUrl(null);
-    setShowTVDetails(false);
-    setSelectedTVShow(null);
-    
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    
-    setTimeout(() => {
-      loadPopAds();
-    }, 1000);
-  };
-
-  // ================= Switch to Movies Page =================
-  const goToMovies = () => {
-    setShowTVSeriesPage(false);
-    setCategory("trending");
-    setPage(1);
-    setHasMore(true);
-    setSearch("");
-    setSearchResults([]);
-    setSuggestions([]);
-    setWatchUrl(null);
-    setShowTVDetails(false);
-    setSelectedTVShow(null);
-    
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    
-    setTimeout(() => {
-      loadPopAds();
-    }, 1000);
-  };
-
-  // ================= NEW: Handle category change =================
-  const handleCategoryChange = (cat) => {
-    setCategory(cat);
-    setPage(1);
-    setHasMore(true);
-    setSearch("");
-    setSearchResults([]);
-    setSuggestions([]);
-    
-    setTimeout(() => {
-      loadPopAds();
-    }, 1000);
   };
 
   const displayMovies = search.trim() ? searchResults : movies;
-  
-  // UPDATED: Optimized hero image
   const heroImage = featured?.backdrop_path || featured?.poster_path
     ? getBackdropImage(featured.backdrop_path || featured.poster_path)
     : "";
@@ -1413,41 +631,11 @@ function App() {
   // ================= Loading Skeleton =================
   const MovieSkeleton = () => (
     <div className="animate-pulse">
-      <div className="bg-gray-800 rounded-xl aspect-[2/3] mb-2"></div>
+      <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-xl aspect-[2/3] mb-2"></div>
       <div className="h-4 bg-gray-800 rounded mb-2"></div>
       <div className="h-3 bg-gray-800 rounded w-1/2"></div>
     </div>
   );
-
-  // ================= Document Title Hook =================
-  useEffect(() => {
-    const title = search.trim() 
-      ? `Search: "${search}" - MovieHouse`
-      : watchUrl 
-        ? `Watching - MovieHouse`
-        : showTVSeriesPage
-          ? category === "tagalog_tv"
-            ? `Tagalog TV Shows - MovieHouse`
-            : `${currentCategoryLabels[category]} - MovieHouse`
-          : category === "filipino"
-            ? `Tagalog Movies - MovieHouse`
-            : `${currentCategoryLabels[category]} - MovieHouse`;
-    
-    document.title = title;
-  }, [search, watchUrl, category, showTVSeriesPage, currentCategoryLabels]);
-
-  // ================= Cleanup on unmount =================
-  useEffect(() => {
-    return () => {
-      const adScripts = document.querySelectorAll('script[type="text/javascript"]');
-      adScripts.forEach(script => {
-        const scriptContent = script.textContent || script.innerHTML;
-        if (scriptContent && scriptContent.includes('a8876ec4588517dc1fe664b0e6812854')) {
-          script.remove();
-        }
-      });
-    };
-  }, []);
 
   return (
     <div className="bg-black text-white min-h-screen">
@@ -1455,11 +643,17 @@ function App() {
       <nav className="fixed top-0 w-full z-50 bg-black/95 px-4 md:px-6 py-3 md:py-4 flex flex-col md:flex-row justify-between items-center gap-4 border-b border-gray-900">
         <div className="flex items-center gap-4 w-full md:w-auto">
           <h1
-            onClick={resetToHome}
+            onClick={() => {
+              setSearch("");
+              setSearchResults([]);
+              setWatchUrl(null);
+              setShowTVDetails(false);
+              setCategory("trending");
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
             className="text-2xl md:text-3xl font-bold cursor-pointer hover:text-red-500 whitespace-nowrap transition-colors duration-300"
             role="button"
             tabIndex={0}
-            onKeyDown={(e) => e.key === 'Enter' && resetToHome()}
           >
             🎬 Movie<span className="text-red-600">House</span>
           </h1>
@@ -1474,8 +668,6 @@ function App() {
                 onChange={handleSearchChange}
                 onKeyDown={handleKeyDown}
                 type="text"
-                aria-label={showTVSeriesPage ? "Search TV shows" : "Search movies"}
-                aria-describedby="search-description"
               />
               
               <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
@@ -1508,13 +700,11 @@ function App() {
                       onClick={() => handleSuggestionClick(item)}
                       onKeyDown={(e) => e.key === 'Enter' && handleSuggestionClick(item)}
                     >
-                      {/* UPDATED: Optimized search suggestion image */}
                       <OptimizedImage
                         src={item.poster_path}
                         alt=""
                         size="thumbnail"
                         className="w-10 h-15 object-cover rounded"
-                        lazy={true}
                       />
                       <div className="flex-1 min-w-0">
                         <p className="font-medium truncate">{item.title || item.name}</p>
@@ -1524,7 +714,6 @@ function App() {
                         <p className="text-gray-500 text-xs mt-1">
                           {item.release_date?.substring(0,4) || item.first_air_date?.substring(0,4) || "Unknown"}
                           {item.vote_average && ` • ⭐ ${item.vote_average.toFixed(1)}`}
-                          {item.credits?.cast?.[0] && ` • ${item.credits.cast[0].name}`}
                         </p>
                       </div>
                     </button>
@@ -1532,28 +721,31 @@ function App() {
                 </div>
               )}
             </div>
-            <p id="search-description" className="sr-only">
-              {showTVSeriesPage ? "Search for TV shows by title. Start typing to see suggestions." : "Search for movies by title. Start typing to see suggestions."}
-            </p>
           </div>
         </div>
         
         <div className="flex gap-2">
           <button
-            onClick={goToMovies}
+            onClick={() => {
+              setShowTVSeriesPage(false);
+              setCategory("trending");
+              setSearch("");
+            }}
             className={`px-4 py-2 rounded-full text-sm transition-colors duration-300 ${
               !showTVSeriesPage ? "bg-red-600" : "bg-gray-800 hover:bg-gray-700"
             }`}
-            aria-pressed={!showTVSeriesPage}
           >
             🎬 Movies
           </button>
           <button
-            onClick={goToTVSeries}
+            onClick={() => {
+              setShowTVSeriesPage(true);
+              setCategory("popular_tv");
+              setSearch("");
+            }}
             className={`px-4 py-2 rounded-full text-sm transition-colors duration-300 ${
               showTVSeriesPage ? "bg-red-600" : "bg-gray-800 hover:bg-gray-700"
             }`}
-            aria-pressed={showTVSeriesPage}
           >
             📺 TV Series
           </button>
@@ -1561,51 +753,20 @@ function App() {
       </nav>
 
       <div className="pt-24 md:pt-28">
-        {/* TV Show Details Modal */}
-        {showTVDetails && selectedTVShow && (
-          <TVShowDetails
-            show={selectedTVShow}
-            onClose={closeTVDetails}
-            onPlayEpisode={playEpisode}
-          />
-        )}
-
-        {search.trim() && (
-          <div className="px-4 md:px-6 mb-6">
-            <div className="flex justify-between items-center">
-              <h2 className="text-xl md:text-2xl font-bold">
-                {isSearching ? (
-                  <span className="text-gray-400">Searching for "{search}"...</span>
-                ) : (
-                  <>
-                    Search Results for "{search}"
-                    {searchResults.length > 0 && (
-                      <span className="text-gray-400 text-base ml-2">
-                        ({searchResults.length} results)
-                      </span>
-                    )}
-                  </>
-                )}
-              </h2>
-              {search && !isSearching && (
-                <button
-                  onClick={handleClearSearch}
-                  className="text-gray-400 hover:text-white text-sm transition-colors duration-300"
-                >
-                  Clear Search
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
         {!watchUrl && !search.trim() && !showTVDetails && (
           <div className="px-4 md:px-6 mb-6 md:mb-8">
             <div className="flex flex-wrap gap-2 md:gap-3">
               {Object.keys(currentCategoryLabels).map((cat) => (
                 <button
                   key={cat}
-                  onClick={() => handleCategoryChange(cat)}
+                  onClick={() => {
+                    setCategory(cat);
+                    setPage(1);
+                    setHasMore(true);
+                    setSearch("");
+                    setSearchResults([]);
+                    setSuggestions([]);
+                  }}
                   className={`px-4 py-2 rounded-full text-sm transition-colors duration-300 ${
                     category === cat ? (
                       cat === "filipino" || cat === "tagalog_tv" ? "bg-green-600" : 
@@ -1620,7 +781,6 @@ function App() {
                       "bg-red-600"
                     ) : "bg-gray-900 hover:bg-gray-800"
                   }`}
-                  aria-pressed={category === cat}
                 >
                   {currentCategoryLabels[cat]}
                 </button>
@@ -1639,7 +799,6 @@ function App() {
                 }
               }}
               className="mb-4 px-4 py-2 rounded-lg bg-gray-900 hover:bg-gray-800 transition-colors duration-300 flex items-center gap-2"
-              aria-label="Back"
             >
               ← Back {showTVSeriesPage ? "to Episodes" : "to List"}
             </button>
@@ -1652,24 +811,6 @@ function App() {
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               />
             </div>
-            
-            {showTVSeriesPage && selectedTVShow && (
-              <div className="mt-6 p-4 bg-gray-900/50 rounded-lg">
-                <h3 className="text-xl font-bold mb-2">Now Playing</h3>
-                <p className="text-gray-300">
-                  {selectedTVShow.name} • Season {watchUrl.split('/').slice(-2)[0]} • Episode {watchUrl.split('/').slice(-1)[0]}
-                </p>
-                <button
-                  onClick={() => {
-                    setWatchUrl(null);
-                    setShowTVDetails(true);
-                  }}
-                  className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors duration-300"
-                >
-                  View All Episodes
-                </button>
-              </div>
-            )}
           </div>
         ) : (
           <>
@@ -1686,31 +827,6 @@ function App() {
                       {featured.title || featured.name}
                     </h1>
                     
-                    {/* Enhanced info for TV shows */}
-                    {showTVSeriesPage && (
-                      <div className="flex items-center gap-3 mb-3">
-                        {featured.number_of_seasons && (
-                          <span className="bg-gray-900/80 px-3 py-1 rounded-full text-sm">
-                            {featured.number_of_seasons} Season{featured.number_of_seasons > 1 ? 's' : ''}
-                          </span>
-                        )}
-                        {featured.number_of_episodes && (
-                          <span className="text-gray-300 text-sm">
-                            {featured.number_of_episodes} Episodes
-                          </span>
-                        )}
-                        {featured.status && (
-                          <span className={`text-sm px-2 py-1 rounded-full ${
-                            featured.status === 'Returning Series' ? 'bg-green-900/50 text-green-300' :
-                            featured.status === 'Ended' ? 'bg-red-900/50 text-red-300' :
-                            'bg-gray-800 text-gray-300'
-                          }`}>
-                            {featured.status}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    
                     <div className="text-gray-300 mb-4 md:mb-6">
                       <p className="text-sm md:text-base line-clamp-3">
                         {featured.overview || "No description available."}
@@ -1721,7 +837,6 @@ function App() {
                       <button
                         onClick={() => startWatching(featured)}
                         className="bg-red-600 hover:bg-red-700 px-5 md:px-6 py-2 md:py-3 rounded-lg font-semibold transition-colors duration-300 flex items-center gap-2"
-                        aria-label={`Play ${featured.title || featured.name}`}
                       >
                         <span>▶</span> {showTVSeriesPage ? "Browse Episodes" : "Play Now"}
                       </button>
@@ -1735,28 +850,8 @@ function App() {
                         {!showTVSeriesPage && (
                           <span className="text-gray-400">• {formatRuntime(featured.runtime || "N/A")}</span>
                         )}
-                        {showTVSeriesPage && featured.episode_run_time?.[0] && (
-                          <span className="text-gray-400">• {featured.episode_run_time[0]}m/ep</span>
-                        )}
-                        {(featured.original_language === 'tl' || 
-                          (featured.origin_country && featured.origin_country.includes('PH'))) && 
-                          <span className="ml-2 text-green-500">Tagalog</span>}
                       </div>
                     </div>
-                    
-                    {/* Cast info for featured */}
-                    {featured.credits?.cast?.slice(0, 3).length > 0 && (
-                      <div className="mt-4">
-                        <p className="text-sm text-gray-400 mb-1">Starring:</p>
-                        <div className="flex flex-wrap gap-2">
-                          {featured.credits.cast.slice(0, 3).map(person => (
-                            <span key={person.id} className="text-xs bg-gray-800 px-2 py-1 rounded">
-                              {person.name}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
@@ -1765,19 +860,7 @@ function App() {
             {loading && !search.trim() && page === 1 ? (
               <div className="px-4 md:px-6">
                 <h2 className="text-xl md:text-2xl font-bold mb-6">
-                  {showTVSeriesPage ? (
-                    category === "tagalog_tv" ? (
-                      "Loading Tagalog TV Shows..."
-                    ) : (
-                      `Loading ${currentCategoryLabels[category]}...`
-                    )
-                  ) : (
-                    category === "filipino" ? (
-                      "Loading Tagalog Movies..."
-                    ) : (
-                      `Loading ${currentCategoryLabels[category]}...`
-                    )
-                  )}
+                  {showTVSeriesPage ? `Loading ${currentCategoryLabels[category]}...` : `Loading ${currentCategoryLabels[category]}...`}
                 </h2>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 md:gap-6">
                   {[...Array(12)].map((_, i) => (
@@ -1789,19 +872,7 @@ function App() {
               <div className="px-4 md:px-6">
                 {!search.trim() && (
                   <h2 className="text-xl md:text-2xl font-bold mb-6">
-                    {showTVSeriesPage ? (
-                      category === "tagalog_tv" ? (
-                        "Tagalog TV Shows"
-                      ) : (
-                        currentCategoryLabels[category]
-                      )
-                    ) : (
-                      category === "filipino" ? (
-                        "Tagalog Movies"
-                      ) : (
-                        currentCategoryLabels[category]
-                      )
-                    )}
+                    {showTVSeriesPage ? currentCategoryLabels[category] : currentCategoryLabels[category]}
                     <span className="text-gray-400 text-base ml-2">
                       ({displayMovies.length} {showTVSeriesPage ? 'TV shows' : 'movies'})
                     </span>
@@ -1836,21 +907,6 @@ function App() {
                     >
                       {loading ? "Loading..." : "Load More"}
                     </button>
-                  </div>
-                )}
-                
-                {/* Tagalog content note */}
-                {(category === "filipino" || category === "tagalog_tv") && displayMovies.length > 0 && (
-                  <div className="mt-8 p-4 bg-green-900/30 rounded-lg border border-gray-700">
-                    <div className="flex items-center gap-3 mb-2">
-                      <span className="text-green-400 text-xl">🇵🇭</span>
-                      <h3 className="text-lg font-bold">About Tagalog Content</h3>
-                    </div>
-                    <p className="text-gray-300 text-sm">
-                      {category === "filipino" 
-                        ? "These are movies originally in Tagalog (Filipino language) or produced in the Philippines. Enjoy authentic Filipino cinema with local stories and culture."
-                        : "These are TV shows originally in Tagalog (Filipino language) or produced in the Philippines. Watch Filipino series, dramas, and entertainment shows."}
-                    </p>
                   </div>
                 )}
               </div>
