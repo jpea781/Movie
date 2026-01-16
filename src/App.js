@@ -1,7 +1,168 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 
 const API_KEY = process.env.REACT_APP_TMDB_API_KEY;
-const IMG = "https://image.tmdb.org/t/p/original";
+
+// ================= IMAGE OPTIMIZATION UTILITIES =================
+const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/";
+const PLACEHOLDER_IMAGE = "https://via.placeholder.com/300x450/111/666?text=No+Poster";
+
+// Image size presets
+const imageSizes = {
+  thumbnail: "w92",
+  small: "w154",
+  card: "w342",
+  medium: "w500",
+  large: "w780",
+  xlarge: "w1280",
+  original: "original"
+};
+
+// Get optimized image URL with WebP support
+const getOptimizedImageUrl = (path, options = {}) => {
+  if (!path) return PLACEHOLDER_IMAGE;
+  
+  const {
+    size = imageSizes.card,
+    format = "webp",
+    quality = 80,
+    retina = false
+  } = options;
+  
+  const actualSize = retina && size !== "original" 
+    ? size.replace('w', '') * 2 
+    : size;
+  
+  const sizePrefix = size === "original" ? "original" : `w${actualSize}`;
+  const baseUrl = `${TMDB_IMAGE_BASE}${sizePrefix}${path}`;
+  
+  if (format === "webp" && size !== "original") {
+    return `${baseUrl}?format=webp&quality=${quality}`;
+  }
+  
+  return baseUrl;
+};
+
+// Get backdrop image for hero section
+const getBackdropImage = (path, isHighDPI = false) => {
+  return getOptimizedImageUrl(path, {
+    size: isHighDPI ? imageSizes.xlarge : imageSizes.large,
+    format: "webp",
+    quality: 85
+  });
+};
+
+// Optimized Image Component - FIXED: Removed unused handleImageError
+const OptimizedImage = React.memo(({ 
+  src, 
+  alt, 
+  size = "card",
+  className = "",
+  lazy = true,
+  priority = false,
+  onLoad,
+  onError,
+  ...props 
+}) => {
+  const [isLoading, setIsLoading] = useState(true);
+  const [imgError, setImgError] = useState(false);
+  const [isVisible, setIsVisible] = useState(!lazy || priority);
+  const imgRef = useRef();
+  const observerRef = useRef();
+  
+  useEffect(() => {
+    if (!lazy || priority || isVisible) return;
+    
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true);
+          observer.disconnect();
+        }
+      },
+      {
+        rootMargin: '200px',
+        threshold: 0.1
+      }
+    );
+    
+    if (imgRef.current) {
+      observer.observe(imgRef.current);
+    }
+    
+    observerRef.current = observer;
+    
+    return () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+      }
+    };
+  }, [lazy, priority, isVisible]);
+  
+  if (!isVisible) {
+    return (
+      <div 
+        ref={imgRef}
+        className={`${className} bg-gray-800 animate-pulse rounded`}
+        style={{ aspectRatio: '2/3' }}
+        aria-hidden="true"
+      />
+    );
+  }
+  
+  const optimizedSrc = getOptimizedImageUrl(src, { 
+    size,
+    format: "webp"
+  });
+  
+  const fallbackSrc = getOptimizedImageUrl(src, { 
+    size,
+    format: "jpg"
+  });
+  
+  const handleImageLoad = (e) => {
+    setIsLoading(false);
+    onLoad?.(e);
+  };
+  
+  return (
+    <div className="relative" ref={imgRef}>
+      {isLoading && (
+        <div className="absolute inset-0 bg-gray-800 animate-pulse rounded" />
+      )}
+      
+      <img
+        src={optimizedSrc}
+        alt={alt}
+        loading={lazy ? "lazy" : "eager"}
+        decoding="async"
+        className={`${className} ${isLoading ? 'opacity-0' : 'opacity-100'} transition-opacity duration-300`}
+        onLoad={handleImageLoad}
+        onError={(e) => {
+          // Fallback to JPG if WebP fails
+          if (e.target.src !== fallbackSrc) {
+            e.target.src = fallbackSrc;
+          } else {
+            setImgError(true);
+            setIsLoading(false);
+            onError?.(e);
+          }
+        }}
+        {...props}
+      />
+      
+      {imgError && (
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-900 rounded">
+          <div className="text-center p-4">
+            <div className="text-gray-500 text-2xl mb-2" aria-hidden="true">🖼️</div>
+            <p className="text-gray-400 text-sm">Image failed to load</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+});
+
+OptimizedImage.displayName = 'OptimizedImage';
 
 // ================= Helper Functions =================
 const formatRuntime = (minutes) => {
@@ -50,8 +211,6 @@ class SimpleErrorBoundary extends React.Component {
 
 // ================= Movie/TV Item Component =================
 const MovieItem = React.memo(({ item, type, onClick }) => {
-  const [imgError, setImgError] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
   const [showFullDescription, setShowFullDescription] = useState(false);
 
   const handleClick = () => {
@@ -122,30 +281,20 @@ const MovieItem = React.memo(({ item, type, onClick }) => {
       aria-label={`Watch ${item.title || item.name}${isTagalog ? ' (Tagalog)' : ''}`}
     >
       <div className="relative overflow-hidden rounded-xl aspect-[2/3] mb-2">
-        {isLoading && (
-          <div className="absolute inset-0 bg-gray-800 animate-pulse rounded-xl" />
-        )}
+        {/* OPTIMIZED IMAGE */}
+        <OptimizedImage
+          src={item.poster_path}
+          alt={`Poster for ${item.title || item.name}`}
+          size="card"
+          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+          lazy={true}
+        />
         
         <div className="absolute inset-0 z-10 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/60 transition-opacity duration-300">
           <div className="w-12 h-12 md:w-14 md:h-14 bg-red-600 rounded-full flex items-center justify-center">
             <span className="text-lg md:text-xl ml-1">▶</span>
           </div>
         </div>
-        
-        <img
-          src={
-            imgError 
-              ? "https://via.placeholder.com/300x450/111/666?text=No+Poster"
-              : item.poster_path
-                ? `${IMG}${item.poster_path}`
-                : "https://via.placeholder.com/300x450/111/666?text=No+Poster"
-          }
-          alt={`Poster for ${item.title || item.name}`}
-          className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 ${isLoading ? 'opacity-0' : 'opacity-100'}`}
-          loading="lazy"
-          onError={() => setImgError(true)}
-          onLoad={() => setIsLoading(false)}
-        />
         
         <div className="absolute top-2 right-2 bg-black/80 px-2 py-1 rounded-full text-xs font-bold">
           ⭐ {item.vote_average?.toFixed(1) || "N/A"}
@@ -209,7 +358,7 @@ const TVShowDetails = ({ show, onClose, onPlayEpisode }) => {
   const [loadingEpisodes, setLoadingEpisodes] = useState(false);
   const [showCredits, setShowCredits] = useState(false);
 
-  // Memoize fetchEpisodes to fix dependency warning
+  // Memoize fetchEpisodes
   const fetchEpisodes = useCallback(async (seasonNumber) => {
     setLoadingEpisodes(true);
     try {
@@ -226,7 +375,7 @@ const TVShowDetails = ({ show, onClose, onPlayEpisode }) => {
     }
   }, [show]);
 
-  // Fetch seasons on component mount
+  // Fetch seasons
   useEffect(() => {
     if (!show?.id) return;
 
@@ -239,7 +388,6 @@ const TVShowDetails = ({ show, onClose, onPlayEpisode }) => {
         setSeasons(data.seasons || []);
         
         if (data.seasons?.[0]) {
-          // Fetch episodes for first season
           fetchEpisodes(data.seasons[0].season_number);
         }
       } catch (error) {
@@ -248,9 +396,9 @@ const TVShowDetails = ({ show, onClose, onPlayEpisode }) => {
     };
 
     fetchSeasons();
-  }, [show, fetchEpisodes]); // Added fetchEpisodes to dependencies
+  }, [show, fetchEpisodes]);
 
-  // Keyboard navigation with proper dependencies
+  // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
@@ -296,7 +444,7 @@ const TVShowDetails = ({ show, onClose, onPlayEpisode }) => {
       <div 
         className="absolute inset-0 bg-cover bg-center opacity-20"
         style={{ 
-          backgroundImage: `url(https://image.tmdb.org/t/p/original${show.backdrop_path})` 
+          backgroundImage: `url(${getBackdropImage(show.backdrop_path)})` 
         }}
       />
       
@@ -312,14 +460,13 @@ const TVShowDetails = ({ show, onClose, onPlayEpisode }) => {
         {/* Show Header */}
         <div className="flex flex-col lg:flex-row gap-8 mb-8">
           <div className="lg:w-1/4">
-            <img
-              src={
-                show.poster_path
-                  ? `https://image.tmdb.org/t/p/w500${show.poster_path}`
-                  : "https://via.placeholder.com/300x450/111/666?text=No+Poster"
-              }
+            {/* OPTIMIZED IMAGE */}
+            <OptimizedImage
+              src={show.poster_path}
               alt={show.name}
+              size="medium"
               className="rounded-xl shadow-2xl w-full"
+              lazy={true}
             />
           </div>
           
@@ -393,10 +540,12 @@ const TVShowDetails = ({ show, onClose, onPlayEpisode }) => {
                   {show.networks.map(network => (
                     <div key={network.id} className="flex items-center gap-2 bg-gray-900/50 px-3 py-2 rounded-lg">
                       {network.logo_path && (
-                        <img
-                          src={`https://image.tmdb.org/t/p/w45${network.logo_path}`}
+                        <OptimizedImage
+                          src={network.logo_path}
                           alt={network.name}
+                          size="small"
                           className="h-6"
+                          lazy={true}
                         />
                       )}
                       <span className="text-sm">{network.name}</span>
@@ -432,18 +581,13 @@ const TVShowDetails = ({ show, onClose, onPlayEpisode }) => {
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
               {show.credits.cast.slice(0, 10).map(person => (
                 <div key={person.id} className="bg-gray-900/50 rounded-lg p-3">
-                  {person.profile_path ? (
-                    <img
-                      src={`https://image.tmdb.org/t/p/w185${person.profile_path}`}
-                      alt={person.name}
-                      className="w-full h-48 object-cover rounded-lg mb-3"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="w-full h-48 bg-gray-800 rounded-lg flex items-center justify-center mb-3">
-                      <span className="text-gray-400">No image</span>
-                    </div>
-                  )}
+                  <OptimizedImage
+                    src={person.profile_path}
+                    alt={person.name}
+                    size="medium"
+                    className="w-full h-48 object-cover rounded-lg mb-3"
+                    lazy={true}
+                  />
                   <h4 className="font-semibold truncate">{person.name}</h4>
                   <p className="text-gray-400 text-sm truncate">{person.character}</p>
                 </div>
@@ -1260,8 +1404,10 @@ function App() {
   };
 
   const displayMovies = search.trim() ? searchResults : movies;
+  
+  // UPDATED: Optimized hero image
   const heroImage = featured?.backdrop_path || featured?.poster_path
-    ? `${IMG}${featured.backdrop_path || featured.poster_path}`
+    ? getBackdropImage(featured.backdrop_path || featured.poster_path)
     : "";
 
   // ================= Loading Skeleton =================
@@ -1362,11 +1508,13 @@ function App() {
                       onClick={() => handleSuggestionClick(item)}
                       onKeyDown={(e) => e.key === 'Enter' && handleSuggestionClick(item)}
                     >
-                      <img
-                        src={item.poster_path ? `${IMG}w92${item.poster_path}` : "https://via.placeholder.com/46x69/111/666"}
+                      {/* UPDATED: Optimized search suggestion image */}
+                      <OptimizedImage
+                        src={item.poster_path}
                         alt=""
+                        size="thumbnail"
                         className="w-10 h-15 object-cover rounded"
-                        loading="lazy"
+                        lazy={true}
                       />
                       <div className="flex-1 min-w-0">
                         <p className="font-medium truncate">{item.title || item.name}</p>
